@@ -1,0 +1,794 @@
+import { useMemo, useState } from 'react'
+import {
+  AlertTriangle,
+  ArrowRightLeft,
+  Calculator,
+  Check,
+  Info,
+  Link2,
+  Plus,
+  RotateCcw,
+  Save,
+  X,
+} from 'lucide-react'
+import type {
+  Direction,
+  Plan,
+  Session,
+  Timeframe,
+  Trade,
+  TradeResult,
+} from '@/types'
+import { SESSIONS, TIMEFRAMES } from '@/types'
+import { useData } from '@/store/DataContext'
+import { useToast } from '@/store/ToastContext'
+import { Modal } from '@/components/ui/Modal'
+import { Button, Badge, InfoNote } from '@/components/ui/primitives'
+import { NumberField } from '@/components/ui/form'
+import { ImageUpload } from '@/components/ui/ImageUpload'
+import {
+  calculatePnl,
+  calculateTradeRisk,
+  decimalsForStep,
+  plannedRR,
+  resultFromPnl,
+} from '@/lib/calc'
+import { COMMON_MISTAKES } from '@/lib/defaults'
+import { isoToLocalInput, localInputToIso, nowIso, timezoneShort } from '@/lib/dates'
+import { formatInTimeZone } from 'date-fns-tz'
+import { cn, uid } from '@/lib/utils'
+import { lots as formatLots, money, pct, price, rMultiple } from '@/lib/format'
+
+interface TradeDraftState {
+  dateTime: string
+  instrumentId: string
+  direction: Direction
+  entry: number | null
+  exit: number | null
+  sl: number | null
+  tp: number | null
+  lots: number | null
+  fees: number | null
+  riskAmount: number | null
+  pnl: number | null
+  setup: string
+  timeframe: Timeframe
+  session: Session
+  reasonEntry: string
+  reasonExit: string
+  mistakes: string[]
+  lessons: string
+  screenshotBefore?: string
+  screenshotAfter?: string
+  planId?: string
+  checklistId?: string
+}
+
+function suggestedSession(tz: string): Session {
+  const hour = Number(formatInTimeZone(new Date(), tz, 'H'))
+  if (hour >= 8 && hour < 13) return 'London'
+  if (hour >= 13 && hour < 22) return 'New York'
+  return 'Asian'
+}
+
+function makeDraft(
+  trade: Trade | undefined,
+  plan: Plan | undefined,
+  settings: ReturnType<typeof useData>['data']['settings'],
+): TradeDraftState {
+  const tz = settings.timezone
+  if (trade) {
+    return {
+      dateTime: isoToLocalInput(trade.date, tz),
+      instrumentId: trade.instrumentId,
+      direction: trade.direction,
+      entry: trade.entry,
+      exit: trade.exit,
+      sl: trade.sl,
+      tp: trade.tp,
+      lots: trade.lots,
+      fees: null,
+      riskAmount: trade.riskAmount,
+      pnl: trade.pnl,
+      setup: trade.setup,
+      timeframe: trade.timeframe,
+      session: trade.session,
+      reasonEntry: trade.reasonEntry,
+      reasonExit: trade.reasonExit,
+      mistakes: trade.mistakes,
+      lessons: trade.lessons,
+      screenshotBefore: trade.screenshotBefore,
+      screenshotAfter: trade.screenshotAfter,
+      planId: trade.planId,
+      checklistId: trade.checklistId,
+    }
+  }
+
+  const activeSetups = settings.setups.filter((setup) => setup.active)
+  return {
+    dateTime: isoToLocalInput(plan?.dateTime ?? nowIso(), tz),
+    instrumentId:
+      plan?.instrumentId ?? settings.activeInstrumentId ?? settings.instruments[0]?.id ?? '',
+    direction: plan?.direction ?? 'BUY',
+    entry: plan?.entry ?? null,
+    exit: null,
+    sl: plan?.sl ?? null,
+    tp: plan?.tp ?? null,
+    lots: plan?.lots && plan.lots > 0 ? plan.lots : null,
+    fees: null,
+    riskAmount: plan?.riskAmount && plan.riskAmount > 0 ? plan.riskAmount : null,
+    pnl: null,
+    setup: plan?.setup ?? activeSetups[0]?.name ?? settings.setups[0]?.name ?? '',
+    timeframe: plan?.timeframe ?? 'M15',
+    session: plan?.session ?? suggestedSession(tz),
+    reasonEntry: plan?.reasoning ?? '',
+    reasonExit: '',
+    mistakes: [],
+    lessons: '',
+    screenshotBefore: plan?.screenshot,
+    screenshotAfter: undefined,
+    planId: plan?.id,
+    checklistId: plan?.checklistId,
+  }
+}
+
+export function TradeForm({
+  trade,
+  plan,
+  onClose,
+}: {
+  trade?: Trade
+  plan?: Plan
+  onClose: () => void
+}) {
+  const { data, saveTrade, savePlan, saveChecklist } = useData()
+  const { toast } = useToast()
+  const settings = data.settings
+  const tz = settings.timezone
+  const [draft, setDraft] = useState<TradeDraftState>(() => makeDraft(trade, plan, settings))
+  const [riskTouched, setRiskTouched] = useState(Boolean(trade))
+  const [pnlTouched, setPnlTouched] = useState(Boolean(trade))
+  const [customMistake, setCustomMistake] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const instrument =
+    settings.instruments.find((item) => item.id === draft.instrumentId) ??
+    settings.instruments[0]
+  const decimals = instrument ? decimalsForStep(instrument.tickSize) : 2
+
+  const linkedPlan = useMemo(
+    () => (draft.planId ? data.plans.find((item) => item.id === draft.planId) : plan),
+    [draft.planId, data.plans, plan],
+  )
+  const linkedChecklist = useMemo(
+    () =>
+      draft.checklistId
+        ? data.checklists.find((item) => item.id === draft.checklistId)
+        : linkedPlan?.checklistId
+          ? data.checklists.find((item) => item.id === linkedPlan.checklistId)
+          : undefined,
+    [draft.checklistId, linkedPlan, data.checklists],
+  )
+
+  const calculatedRisk = useMemo(
+    () => (instrument ? calculateTradeRisk(draft.entry, draft.sl, draft.lots ?? 0, instrument) : 0),
+    [instrument, draft.entry, draft.sl, draft.lots],
+  )
+  const riskValue = riskTouched ? draft.riskAmount : calculatedRisk
+  const effectiveRisk = riskValue ?? 0
+
+  const calculatedPnl = useMemo(
+    () =>
+      instrument
+        ? calculatePnl({
+            direction: draft.direction,
+            entry: draft.entry,
+            exit: draft.exit,
+            lots: draft.lots ?? 0,
+            spec: instrument,
+            fees: draft.fees ?? 0,
+          })
+        : { gross: 0, fees: 0, pnl: 0, result: 'Breakeven' as TradeResult },
+    [instrument, draft.direction, draft.entry, draft.exit, draft.lots, draft.fees],
+  )
+  const pnlValue = pnlTouched ? draft.pnl : calculatedPnl.pnl
+  const effectivePnl = pnlValue ?? 0
+  const result: TradeResult = resultFromPnl(effectivePnl)
+  const rValue = effectiveRisk > 0 ? effectivePnl / effectiveRisk : 0
+  const hasPriceResult = draft.entry != null && draft.exit != null
+
+  const balance = useMemo(
+    () =>
+      settings.startingBalance + data.trades.reduce((sum, item) => sum + item.pnl, 0),
+    [settings.startingBalance, data.trades],
+  )
+
+  const patch = (partial: Partial<TradeDraftState>) =>
+    setDraft((current) => ({ ...current, ...partial }))
+
+  const toggleMistake = (mistake: string) => {
+    patch({
+      mistakes: draft.mistakes.includes(mistake)
+        ? draft.mistakes.filter((item) => item !== mistake)
+        : [...draft.mistakes, mistake],
+    })
+  }
+
+  const addCustomMistake = () => {
+    const clean = customMistake.trim()
+    if (!clean) return
+    if (!draft.mistakes.includes(clean)) {
+      patch({ mistakes: [...draft.mistakes, clean] })
+    }
+    setCustomMistake('')
+  }
+
+  const save = async () => {
+    const missing: string[] = []
+    if (!draft.instrumentId) missing.push('instrument')
+    if (!draft.setup) missing.push('setup')
+    if (draft.entry == null || draft.entry <= 0) missing.push('entry price')
+    if (draft.exit == null || draft.exit <= 0) missing.push('exit price')
+    if (draft.sl == null || draft.sl <= 0) missing.push('stop loss')
+    if (draft.lots == null || draft.lots <= 0) missing.push('lot size')
+    if (effectiveRisk <= 0) missing.push('risk amount')
+    if (missing.length > 0) {
+      toast(`Complete these fields first: ${missing.join(', ')}.`, 'error')
+      return
+    }
+
+    const seq = trade?.seq ?? data.trades.reduce((max, item) => Math.max(max, item.seq), 0) + 1
+    const nextTrade: Trade = {
+      id: trade?.id ?? uid('trade'),
+      seq,
+      createdAt: trade?.createdAt ?? nowIso(),
+      updatedAt: nowIso(),
+      planId: draft.planId,
+      checklistId: draft.checklistId,
+      date: localInputToIso(draft.dateTime, tz),
+      instrumentId: draft.instrumentId,
+      direction: draft.direction,
+      entry: draft.entry ?? 0,
+      exit: draft.exit ?? 0,
+      sl: draft.sl ?? 0,
+      tp: draft.tp,
+      lots: draft.lots ?? 0,
+      riskAmount: effectiveRisk,
+      pnl: effectivePnl,
+      result,
+      rMultiple: rValue,
+      setup: draft.setup,
+      timeframe: draft.timeframe,
+      session: draft.session,
+      screenshotBefore: draft.screenshotBefore,
+      screenshotAfter: draft.screenshotAfter,
+      reasonEntry: draft.reasonEntry,
+      reasonExit: draft.reasonExit,
+      mistakes: draft.mistakes,
+      lessons: draft.lessons,
+    }
+
+    setBusy(true)
+    try {
+      await saveTrade(nextTrade)
+
+      if (draft.planId) {
+        const relatedPlan = data.plans.find((item) => item.id === draft.planId)
+        if (relatedPlan) {
+          await savePlan({
+            ...relatedPlan,
+            status: 'Executed',
+            tradeId: nextTrade.id,
+          })
+        }
+      }
+
+      if (linkedChecklist) {
+        await saveChecklist({
+          ...linkedChecklist,
+          tradeId: nextTrade.id,
+          finalized: true,
+        })
+      }
+
+      toast(
+        `Trade T-${String(seq).padStart(4, '0')} saved · ${result} ${effectivePnl >= 0 ? '+' : ''}${money(effectivePnl)}.`,
+        result === 'Loss' ? 'info' : 'success',
+      )
+      onClose()
+    } catch {
+      toast('Could not save the trade. Check browser storage.', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="editor"
+      title={
+        trade
+          ? `Edit trade · T-${String(trade.seq).padStart(4, '0')}`
+          : 'Log a completed trade'
+      }
+      description={`Times shown in ${timezoneShort(tz)}. Enter your actual MT5 execution data — nothing is fetched from a broker.`}
+      footer={
+        <>
+          <div className="mr-auto hidden items-center gap-2 sm:flex">
+            {hasPriceResult ? (
+              <>
+                <Badge variant={result === 'Win' ? 'green' : result === 'Loss' ? 'red' : 'slate'}>
+                  {result}
+                </Badge>
+                <span
+                  className={cn(
+                    'font-mono text-[12px] font-semibold',
+                    effectivePnl > 0
+                      ? 'text-profit'
+                      : effectivePnl < 0
+                        ? 'text-loss'
+                        : 'text-muted',
+                  )}
+                >
+                  {effectivePnl >= 0 ? '+' : ''}
+                  {money(effectivePnl)}
+                </span>
+                <span className="font-mono text-[10px] text-dim">{rMultiple(rValue)}</span>
+              </>
+            ) : (
+              <span className="text-[10px] text-dim">Enter entry & exit to calculate P/L</span>
+            )}
+          </div>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={() => void save()} loading={busy}>
+            <Save size={14} /> {trade ? 'Save changes' : 'Save trade'}
+          </Button>
+        </>
+      }
+    >
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+        <div className="min-w-0 space-y-4">
+          {linkedPlan ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-accent/20 bg-accent/[0.05] px-3.5 py-2.5">
+              <div className="flex items-center gap-2 text-[11px] text-blue-100/80">
+                <Link2 size={13} className="text-accent-2" />
+                Linked plan: <span className="font-medium text-fg">{linkedPlan.setup}</span>
+                <span className="text-dim">· {linkedPlan.direction}</span>
+              </div>
+              {linkedChecklist ? (
+                <div className="flex items-center gap-2 text-[10px]">
+                  <span className="text-dim">Checklist</span>
+                  <span
+                    className={cn(
+                      'font-semibold',
+                      linkedChecklist.decision === 'READY'
+                        ? 'text-profit'
+                        : linkedChecklist.decision === 'WAIT'
+                          ? 'text-warn'
+                          : 'text-loss',
+                    )}
+                  >
+                    {linkedChecklist.decision}
+                  </span>
+                  <span className="font-mono text-dim">{linkedChecklist.overallPct}%</span>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          <section className="card p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <ArrowRightLeft size={15} className="text-accent-2" />
+              <h3 className="text-[13px] font-semibold">Trade execution</h3>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <div>
+                <label className="label">Date & time ({timezoneShort(tz)})</label>
+                <input
+                  type="datetime-local"
+                  className="input"
+                  value={draft.dateTime}
+                  onChange={(event) => patch({ dateTime: event.target.value })}
+                />
+              </div>
+              <div>
+                <label className="label">Instrument</label>
+                <select
+                  className="input"
+                  value={draft.instrumentId}
+                  onChange={(event) => patch({ instrumentId: event.target.value })}
+                >
+                  {settings.instruments.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.symbol} — {item.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <span className="label">Direction</span>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {(['BUY', 'SELL'] as Direction[]).map((direction) => (
+                    <button
+                      key={direction}
+                      type="button"
+                      onClick={() => patch({ direction })}
+                      className={cn(
+                        'h-10 rounded-lg border text-[12px] font-semibold transition',
+                        draft.direction === direction
+                          ? direction === 'BUY'
+                            ? 'border-profit/50 bg-profit/15 text-profit'
+                            : 'border-loss/50 bg-loss/15 text-loss'
+                          : 'border-line bg-ink/50 text-muted hover:border-line-2 hover:text-fg',
+                      )}
+                    >
+                      {direction === 'BUY' ? '▲ BUY' : '▼ SELL'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="label">Setup</label>
+                <select
+                  className="input"
+                  value={draft.setup}
+                  onChange={(event) => patch({ setup: event.target.value })}
+                >
+                  {settings.setups.map((setup) => (
+                    <option key={setup.id} value={setup.name}>
+                      {setup.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="label">Timeframe</label>
+                <select
+                  className="input"
+                  value={draft.timeframe}
+                  onChange={(event) => patch({ timeframe: event.target.value as Timeframe })}
+                >
+                  {TIMEFRAMES.map((timeframe) => (
+                    <option key={timeframe} value={timeframe}>
+                      {timeframe}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="label">Session</label>
+                <select
+                  className="input"
+                  value={draft.session}
+                  onChange={(event) => patch({ session: event.target.value as Session })}
+                >
+                  {SESSIONS.map((session) => (
+                    <option key={session} value={session}>
+                      {session}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </section>
+
+          <section className="card p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <Calculator size={15} className="text-accent-2" />
+              <h3 className="text-[13px] font-semibold">Prices, size & result</h3>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <NumberField
+                label="Entry price"
+                value={draft.entry}
+                onChange={(value) => patch({ entry: value })}
+                suffix="USD"
+              />
+              <NumberField
+                label="Exit price"
+                value={draft.exit}
+                onChange={(value) => patch({ exit: value })}
+                suffix="USD"
+              />
+              <NumberField
+                label="Stop Loss"
+                value={draft.sl}
+                onChange={(value) => patch({ sl: value })}
+                suffix="USD"
+              />
+              <NumberField
+                label="Take Profit"
+                value={draft.tp}
+                onChange={(value) => patch({ tp: value })}
+                suffix="USD"
+              />
+              <NumberField
+                label="Lot size"
+                value={draft.lots}
+                onChange={(value) => patch({ lots: value })}
+                suffix="lots"
+              />
+              <NumberField
+                label="Risk amount"
+                value={riskValue}
+                onChange={(value) => {
+                  setRiskTouched(true)
+                  patch({ riskAmount: value })
+                }}
+                suffix="USD"
+                hint={
+                  riskTouched
+                    ? 'Manual risk amount — used for the R multiple.'
+                    : `Auto: SL distance × ${instrument?.tickValue ?? '—'} tick value × lots.`
+                }
+              />
+              <NumberField
+                label="Fees / commission"
+                value={draft.fees}
+                onChange={(value) => patch({ fees: value })}
+                suffix="USD"
+                hint="Optional. Subtracted from the calculated P/L."
+              />
+              <NumberField
+                label="Profit / loss"
+                value={pnlValue}
+                onChange={(value) => {
+                  setPnlTouched(true)
+                  patch({ pnl: value })
+                }}
+                suffix="USD"
+                inputClassName={
+                  effectivePnl > 0
+                    ? 'text-profit'
+                    : effectivePnl < 0
+                      ? 'text-loss'
+                      : undefined
+                }
+                hint={
+                  pnlTouched
+                    ? 'Using your actual P/L.'
+                    : 'Auto-calculated from entry, exit, lots and fees.'
+                }
+              />
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setPnlTouched(false)
+                  setRiskTouched(false)
+                }}
+              >
+                <RotateCcw size={12} /> Use calculated values
+              </Button>
+              <span className="text-[10px] text-dim">
+                Balance {money(balance)} · planned R:R{' '}
+                {plannedRR(draft.entry, draft.sl, draft.tp) > 0
+                  ? `1:${plannedRR(draft.entry, draft.sl, draft.tp).toFixed(2)}`
+                  : '—'}
+              </span>
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <div className="rounded-lg border border-line/80 bg-ink/40 px-2.5 py-2">
+                <div className="text-[9px] uppercase tracking-wide text-dim">Result</div>
+                <div className="mt-1">
+                  {hasPriceResult ? (
+                    <Badge
+                      variant={result === 'Win' ? 'green' : result === 'Loss' ? 'red' : 'slate'}
+                    >
+                      {result}
+                    </Badge>
+                  ) : (
+                    <span className="text-[11px] text-dim">—</span>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-lg border border-line/80 bg-ink/40 px-2.5 py-2">
+                <div className="text-[9px] uppercase tracking-wide text-dim">Net P/L</div>
+                <div
+                  className={cn(
+                    'mt-0.5 font-mono text-[13px] font-semibold',
+                    effectivePnl > 0
+                      ? 'text-profit'
+                      : effectivePnl < 0
+                        ? 'text-loss'
+                        : 'text-fg',
+                  )}
+                >
+                  {effectivePnl >= 0 ? '+' : ''}
+                  {money(effectivePnl)}
+                </div>
+              </div>
+              <div className="rounded-lg border border-line/80 bg-ink/40 px-2.5 py-2">
+                <div className="text-[9px] uppercase tracking-wide text-dim">R multiple</div>
+                <div
+                  className={cn(
+                    'mt-0.5 font-mono text-[13px] font-semibold',
+                    rValue > 0 ? 'text-profit' : rValue < 0 ? 'text-loss' : 'text-fg',
+                  )}
+                >
+                  {rMultiple(rValue)}
+                </div>
+              </div>
+              <div className="rounded-lg border border-line/80 bg-ink/40 px-2.5 py-2">
+                <div className="text-[9px] uppercase tracking-wide text-dim">Risk of balance</div>
+                <div className="mt-0.5 font-mono text-[13px] font-semibold text-fg">
+                  {pct(balance > 0 ? (effectiveRisk / balance) * 100 : 0, 2)}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-2 text-[10px] leading-relaxed text-dim">
+              Auto P/L is a price-based estimate for {instrument?.symbol ?? 'the instrument'} using{' '}
+              {instrument?.tickValue ?? '—'} USD per {instrument?.tickSize ?? '—'} price move per lot.
+              Spread, swap and broker-specific costs should be reflected in fees or the actual P/L
+              field.
+            </div>
+          </section>
+
+          <section className="card p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <Info size={15} className="text-accent-2" />
+              <h3 className="text-[13px] font-semibold">Review & lessons</h3>
+            </div>
+            <div className="grid gap-3">
+              <div>
+                <label className="label" htmlFor="reason-entry">
+                  Reason for entering
+                </label>
+                <textarea
+                  id="reason-entry"
+                  className="input min-h-[76px]"
+                  value={draft.reasonEntry}
+                  onChange={(event) => patch({ reasonEntry: event.target.value })}
+                  placeholder="What made this trade valid at entry?"
+                />
+              </div>
+              <div>
+                <label className="label" htmlFor="reason-exit">
+                  Reason for exiting
+                </label>
+                <textarea
+                  id="reason-exit"
+                  className="input min-h-[76px]"
+                  value={draft.reasonExit}
+                  onChange={(event) => patch({ reasonExit: event.target.value })}
+                  placeholder="Target hit, invalidation, trailed out, emotional exit…"
+                />
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div className="min-w-0 space-y-4">
+          <section className="card p-4">
+            <h3 className="mb-2.5 text-[13px] font-semibold">Mistakes made</h3>
+            <div className="flex flex-wrap gap-1.5">
+              {Array.from(new Set([...COMMON_MISTAKES, ...draft.mistakes])).map((mistake) => {
+                const active = draft.mistakes.includes(mistake)
+                return (
+                  <button
+                    key={mistake}
+                    type="button"
+                    onClick={() => toggleMistake(mistake)}
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-medium transition',
+                      active
+                        ? 'border-loss/40 bg-loss/10 text-red-200'
+                        : 'border-line bg-ink/40 text-muted hover:border-line-2 hover:text-fg',
+                    )}
+                  >
+                    {active ? <Check size={10} /> : null}
+                    {mistake}
+                  </button>
+                )
+              })}
+            </div>
+            <div className="mt-2 flex gap-1.5">
+              <input
+                className="input input-sm"
+                value={customMistake}
+                onChange={(event) => setCustomMistake(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    addCustomMistake()
+                  }
+                }}
+                placeholder="Add your own mistake…"
+              />
+              <Button type="button" size="sm" variant="soft" onClick={addCustomMistake}>
+                <Plus size={13} />
+              </Button>
+            </div>
+            {draft.mistakes.length > 0 ? (
+              <div className="mt-2 space-y-1">
+                {draft.mistakes.map((mistake) => (
+                  <div
+                    key={mistake}
+                    className="flex items-center justify-between rounded-md bg-loss/[0.06] px-2 py-1 text-[10px] text-red-200/80"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <AlertTriangle size={10} />
+                      {mistake}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => toggleMistake(mistake)}
+                      className="text-dim hover:text-fg"
+                      aria-label={`Remove ${mistake}`}
+                    >
+                      <X size={11} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-[10px] text-dim">
+                No mistakes selected. Honest tagging makes your analytics more useful.
+              </p>
+            )}
+          </section>
+
+          <section className="card p-4">
+            <h3 className="mb-2.5 text-[13px] font-semibold">Lessons learned</h3>
+            <textarea
+              className="input min-h-[110px]"
+              value={draft.lessons}
+              onChange={(event) => patch({ lessons: event.target.value })}
+              placeholder="What will you repeat, and what will you do differently next time?"
+            />
+          </section>
+
+          <section className="card space-y-3 p-4">
+            <h3 className="text-[13px] font-semibold">Chart screenshots</h3>
+            <ImageUpload
+              label="Before entry"
+              value={draft.screenshotBefore}
+              onChange={(value) => patch({ screenshotBefore: value })}
+            />
+            <ImageUpload
+              label="After exit"
+              value={draft.screenshotAfter}
+              onChange={(value) => patch({ screenshotAfter: value })}
+            />
+          </section>
+
+          {linkedPlan ? (
+            <InfoNote tone="blue" icon={<Link2 size={12} />}>
+              Saving this trade marks the linked plan as executed and links the checklist for
+              quality-vs-result comparison.
+            </InfoNote>
+          ) : (
+            <InfoNote tone="slate" icon={<Info size={12} />}>
+              You can log a trade without a plan, but planned trades produce cleaner analytics.
+              Use <span className="font-medium text-fg">Trading Plan → New plan</span> first when
+              possible.
+            </InfoNote>
+          )}
+          <div className="text-[10px] text-dim">
+            Lot size entered:{' '}
+            <span className="font-mono text-muted">{formatLots(draft.lots)}</span> · risk{' '}
+            <span className="font-mono text-muted">{money(effectiveRisk)}</span> · SL distance{' '}
+            <span className="font-mono text-muted">
+              {price(
+                draft.entry != null && draft.sl != null
+                  ? Math.abs(draft.entry - draft.sl)
+                  : null,
+                decimals,
+              )}
+            </span>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  )
+}
