@@ -29,6 +29,16 @@ import { computeMetrics, computeRiskStatus } from '@/lib/metrics'
 import { clockTime, timezoneShort, todayKey } from '@/lib/dates'
 import { ProgressBar } from '@/components/ui/primitives'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
+import { useUsdRate } from '@/lib/fx'
+
+const LOCAL_CURRENCY = 'RWF'
+
+function formatRwf(value: number, digits = 0) {
+  return value.toLocaleString('en-US', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })
+}
 
 interface NavItem {
   to: string
@@ -265,6 +275,12 @@ function Topbar({ onMenu }: { onMenu: () => void }) {
   const location = useLocation()
   const navigate = useNavigate()
   const clock = useClock(data.settings.timezone)
+  const { fx, stale } = useUsdRate(LOCAL_CURRENCY)
+  const balanceUsd =
+    data.settings.startingBalance + data.trades.reduce((sum, trade) => sum + trade.pnl, 0)
+  const fxTitle = fx
+    ? `1 USD = ${formatRwf(fx.rate, 2)} ${LOCAL_CURRENCY}. Published ${new Date(fx.updatedAt).toLocaleString()} by ${fx.source}; checked ${new Date(fx.fetchedAt).toLocaleTimeString()}. Refreshes automatically every hour.${stale ? ' Last refresh failed; showing the saved rate.' : ''}`
+    : 'Loading the USD/RWF exchange rate…'
   const activeInstrument =
     data.settings.instruments.find((item) => item.id === data.settings.activeInstrumentId) ??
     data.settings.instruments[0]
@@ -305,24 +321,46 @@ function Topbar({ onMenu }: { onMenu: () => void }) {
           <span className="font-mono tabular-nums">{clock}</span>
           <span className="text-dim">· {timezoneShort(data.settings.timezone)}</span>
         </div>
-        <div className="hidden items-center gap-2 rounded-lg border border-line bg-panel/60 px-2.5 py-1.5 sm:flex">
-          <span className="text-[9px] uppercase tracking-[0.1em] text-dim">Balance</span>
-          <span className="font-mono text-[11px] font-semibold text-fg">
-            {money(
-              data.settings.startingBalance +
-                data.trades.reduce((sum, trade) => sum + trade.pnl, 0),
+        <div
+          className="flex shrink-0 items-center gap-1 rounded-lg border border-line bg-panel/60 px-1.5 py-1.5 text-[10px] text-muted sm:gap-1.5 sm:px-2.5"
+          title={fxTitle}
+        >
+          <span
+            className={cn(
+              'hidden h-1.5 w-1.5 rounded-full sm:inline-block',
+              fx && !stale ? 'bg-profit' : 'bg-warn',
             )}
+          />
+          <span className="hidden text-dim sm:inline">USD/{LOCAL_CURRENCY}</span>
+          <span className="text-dim sm:hidden">{LOCAL_CURRENCY}</span>
+          <span className="hidden font-mono font-semibold tabular-nums text-fg sm:inline">
+            {fx ? formatRwf(fx.rate, 2) : '…'}
+          </span>
+          <span className="font-mono font-semibold tabular-nums text-fg sm:hidden">
+            {fx ? formatRwf(fx.rate) : '…'}
+          </span>
+        </div>
+        <div className="hidden items-center gap-2 rounded-lg border border-line bg-panel/60 px-2.5 py-1 sm:flex">
+          <span className="text-[9px] uppercase tracking-[0.1em] text-dim">Balance</span>
+          <span className="flex flex-col items-end leading-tight">
+            <span className="font-mono text-[11px] font-semibold text-fg">{money(balanceUsd)}</span>
+            {fx ? (
+              <span className="font-mono text-[9px] text-dim">
+                ≈ {formatRwf(balanceUsd * fx.rate)} {LOCAL_CURRENCY}
+              </span>
+            ) : null}
           </span>
         </div>
         <ThemeToggle />
         <button
           type="button"
           onClick={() => navigate('/plan?new=1')}
+          aria-label="New plan"
           className="btn btn-primary h-8 px-2.5 text-[12px]"
         >
           <Plus size={14} />
           <span className="hidden sm:inline">New plan</span>
-          <span className="sm:hidden">Plan</span>
+          <span className="hidden min-[420px]:inline sm:hidden">Plan</span>
         </button>
       </div>
     </header>
