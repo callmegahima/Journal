@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Personal journal data backup (auto-saved by the app)
+pa-journal-autosave.json
