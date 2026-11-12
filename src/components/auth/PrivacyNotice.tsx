@@ -37,7 +37,7 @@ export function PrivacyNotice() {
       title: 'Your choices',
       body: [
         'Export: Settings → Backup & data → Export backup gives you all your data as a file at any time.',
-        'Delete: Settings → Account → Delete account permanently removes your account and every journal record stored on the server. Data saved in a browser can be cleared from that browser.',
+        'Delete: Settings → Profile & account → Delete account permanently removes your account and every journal record stored on the server. Data saved in a browser can be cleared from that browser.',
         'You can change your password or sign out of a device at any time.',
       ],
     },
