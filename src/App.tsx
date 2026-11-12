@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef } from 'react'
+import { Component, lazy, Suspense, useEffect, useRef, type ReactNode } from 'react'
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { AlertTriangle, Loader2, RotateCcw } from 'lucide-react'
 import { DataProvider, useData } from '@/store/DataContext'
@@ -10,39 +10,40 @@ import { AppShell } from '@/components/layout/AppShell'
 import { LockScreen } from '@/components/LockScreen'
 import { LogoMark } from '@/components/Logo'
 import { Button } from '@/components/ui/primitives'
+import { loadPage } from '@/lib/reload'
 
 const DashboardPage = lazy(() =>
-  import('@/pages/Dashboard').then((module) => ({ default: module.DashboardPage })),
+  loadPage(() => import('@/pages/Dashboard')).then((module) => ({ default: module.DashboardPage })),
 )
 const TradingPlanPage = lazy(() =>
-  import('@/pages/TradingPlan').then((module) => ({ default: module.TradingPlanPage })),
+  loadPage(() => import('@/pages/TradingPlan')).then((module) => ({ default: module.TradingPlanPage })),
 )
 const JournalPage = lazy(() =>
-  import('@/pages/Journal').then((module) => ({ default: module.JournalPage })),
+  loadPage(() => import('@/pages/Journal')).then((module) => ({ default: module.JournalPage })),
 )
 const CalendarPage = lazy(() =>
-  import('@/pages/Calendar').then((module) => ({ default: module.CalendarPage })),
+  loadPage(() => import('@/pages/Calendar')).then((module) => ({ default: module.CalendarPage })),
 )
 const StrategyPage = lazy(() =>
-  import('@/pages/Strategy').then((module) => ({ default: module.StrategyPage })),
+  loadPage(() => import('@/pages/Strategy')).then((module) => ({ default: module.StrategyPage })),
 )
 const MarginCalculatorPage = lazy(() =>
-  import('@/pages/MarginCalculator').then((module) => ({ default: module.MarginCalculatorPage })),
+  loadPage(() => import('@/pages/MarginCalculator')).then((module) => ({ default: module.MarginCalculatorPage })),
 )
 const NewsTradePage = lazy(() =>
-  import('@/pages/MarginCalculator').then((module) => ({ default: module.NewsTradePage })),
+  loadPage(() => import('@/pages/MarginCalculator')).then((module) => ({ default: module.NewsTradePage })),
 )
 const RiskCalculatorPage = lazy(() =>
-  import('@/pages/RiskCalculator').then((module) => ({ default: module.RiskCalculatorPage })),
+  loadPage(() => import('@/pages/RiskCalculator')).then((module) => ({ default: module.RiskCalculatorPage })),
 )
 const PsychologyPage = lazy(() =>
-  import('@/pages/Psychology').then((module) => ({ default: module.PsychologyPage })),
+  loadPage(() => import('@/pages/Psychology')).then((module) => ({ default: module.PsychologyPage })),
 )
 const AnalyticsPage = lazy(() =>
-  import('@/pages/Analytics').then((module) => ({ default: module.AnalyticsPage })),
+  loadPage(() => import('@/pages/Analytics')).then((module) => ({ default: module.AnalyticsPage })),
 )
 const SettingsPage = lazy(() =>
-  import('@/pages/Settings').then((module) => ({ default: module.SettingsPage })),
+  loadPage(() => import('@/pages/Settings')).then((module) => ({ default: module.SettingsPage })),
 )
 
 function PageLoading() {
@@ -52,6 +53,43 @@ function PageLoading() {
       Loading this page…
     </div>
   )
+}
+
+/** If a page still fails to load (offline, site down), show a way out instead of a blank screen. */
+class PageErrorBoundary extends Component<{ children: ReactNode; resetKey: string }, { failed: boolean }> {
+  state = { failed: false }
+
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+
+  componentDidUpdate(previous: { resetKey: string }) {
+    if (this.state.failed && previous.resetKey !== this.props.resetKey) {
+      this.setState({ failed: false })
+    }
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children
+    return (
+      <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 px-4 text-center">
+        <AlertTriangle size={20} className="text-warn" />
+        <div className="text-[13px] font-semibold text-fg">This page couldn't load</div>
+        <p className="max-w-sm text-[11px] leading-relaxed text-dim">
+          The app was probably updated, or the connection dropped. Reload to get the latest
+          version. Your journal data is safe.
+        </p>
+        <Button variant="primary" onClick={() => window.location.reload()}>
+          <RotateCcw size={14} /> Reload
+        </Button>
+      </div>
+    )
+  }
+}
+
+function RoutedPages({ children }: { children: ReactNode }) {
+  const location = useLocation()
+  return <PageErrorBoundary resetKey={location.pathname}>{children}</PageErrorBoundary>
 }
 
 function ScrollToTop() {
@@ -149,6 +187,7 @@ function JournalApp() {
       <AutoLock />
       <ScrollToTop />
       <LegacyImportBanner />
+      <RoutedPages>
       <Suspense fallback={<PageLoading />}>
         <Routes>
           <Route path="/" element={<DashboardPage />} />
@@ -165,6 +204,7 @@ function JournalApp() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>
+      </RoutedPages>
     </AppShell>
   )
 }
