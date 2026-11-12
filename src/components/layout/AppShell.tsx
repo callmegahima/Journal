@@ -17,6 +17,7 @@ import {
   Plus,
   Settings,
   ShieldAlert,
+  ShieldCheck,
   Target,
   X,
 } from 'lucide-react'
@@ -30,6 +31,7 @@ import { clockTime, timezoneShort, todayKey } from '@/lib/dates'
 import { ProgressBar } from '@/components/ui/primitives'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { useUsdRate } from '@/lib/fx'
+import { useIsAdmin } from '@/lib/admin'
 
 const LOCAL_CURRENCY = 'RWF'
 
@@ -85,6 +87,7 @@ function useClock(tz: string) {
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { data, lockNow, sync, syncNow } = useData()
   const auth = useAuth()
+  const isAdmin = useIsAdmin()
   const { settings, trades } = data
   const navigate = useNavigate()
   const risk = useMemo(
@@ -171,6 +174,23 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             <Settings size={15} className="shrink-0 text-dim group-hover:text-muted" />
             Settings
           </NavLink>
+          {isAdmin ? (
+            <NavLink
+              to="/admin"
+              onClick={onNavigate}
+              className={({ isActive }) =>
+                cn(
+                  'group mt-0.5 flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-[12px] font-medium transition',
+                  isActive
+                    ? 'bg-accent/10 text-fg ring-1 ring-inset ring-accent/20'
+                    : 'text-muted hover:bg-panel/80 hover:text-fg',
+                )
+              }
+            >
+              <ShieldCheck size={15} className="shrink-0 text-dim group-hover:text-muted" />
+              Admin
+            </NavLink>
+          ) : null}
         </div>
 
         <button
@@ -286,7 +306,12 @@ function Topbar({ onMenu }: { onMenu: () => void }) {
     data.settings.instruments[0]
   const current =
     ALL_ITEMS.find((item) => (item.end ? location.pathname === '/' : location.pathname.startsWith(item.to)))
-      ?.label ?? (location.pathname.startsWith('/settings') ? 'Settings' : 'Dashboard')
+      ?.label ??
+    (location.pathname.startsWith('/settings')
+      ? 'Settings'
+      : location.pathname.startsWith('/admin')
+        ? 'Admin'
+        : 'Dashboard')
 
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-line bg-ink/85 px-4 backdrop-blur-md sm:px-6">

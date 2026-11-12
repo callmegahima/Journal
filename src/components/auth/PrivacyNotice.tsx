@@ -15,7 +15,8 @@ export function PrivacyNotice() {
     {
       title: 'Who can see your trades',
       body: [
-        'Only you. Every record is tied to your account, and the database itself refuses any request for another person’s records (Row Level Security). Other users cannot see, search, or change your data, and you cannot see theirs.',
+        'Your journal content is visible only to you. Every record is tied to your account, and the database itself refuses any request for another person’s records (Row Level Security). Other users cannot see, search, or change your data, and you cannot see theirs.',
+        'The app administrator can see your account details (email, name, sign-in method, sign-up and last sign-in dates) and summary numbers (how many plans and trades you have, win/loss count, net P/L and balance). The administrator cannot see your password or the content of your plans, trades, notes or screenshots, and can suspend or delete accounts that break the rules.',
         'There are no public profiles, leaderboards or sharing features.',
       ],
     },
@@ -23,7 +24,7 @@ export function PrivacyNotice() {
       title: 'Where it is stored',
       body: [
         'Accounts and journal data are hosted by Supabase (database and sign-in service). Data is sent over encrypted HTTPS connections and encrypted at rest by the provider.',
-        'The app itself is a static website served by GitHub Pages; it does not receive your journal data.',
+        'The app itself is a static website served by GitHub Pages and Netlify; they do not receive your journal data.',
       ],
     },
     {

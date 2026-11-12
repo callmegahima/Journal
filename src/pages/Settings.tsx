@@ -643,7 +643,7 @@ export function SettingsPage() {
                   },
                   {
                     title: 'Private to you',
-                    text: 'Only your login can read your journal. A copy is kept in this browser for offline use; your account keeps it safe across devices.',
+                    text: 'Only your login can read your journal content (the app admin sees account details and summary numbers only). A copy is kept in this browser for offline use; your account keeps it safe across devices.',
                   },
                 ].map((item) => (
                   <div

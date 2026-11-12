@@ -42,6 +42,9 @@ const PsychologyPage = lazy(() =>
 const AnalyticsPage = lazy(() =>
   loadPage(() => import('@/pages/Analytics')).then((module) => ({ default: module.AnalyticsPage })),
 )
+const AdminPage = lazy(() =>
+  loadPage(() => import('@/pages/Admin')).then((module) => ({ default: module.AdminPage })),
+)
 const SettingsPage = lazy(() =>
   loadPage(() => import('@/pages/Settings')).then((module) => ({ default: module.SettingsPage })),
 )
@@ -201,6 +204,7 @@ function JournalApp() {
           <Route path="/psychology" element={<PsychologyPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/admin" element={<AdminPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>
