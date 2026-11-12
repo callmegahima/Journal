@@ -36,7 +36,7 @@ export function Logo({
       {!compact ? (
         <div className="leading-tight">
           <div className="text-[13px] font-semibold tracking-tight text-fg">
-            PA Trading Journal
+            My Trading Journal
           </div>
           <div className="text-[10px] font-medium uppercase tracking-[0.12em] text-dim">
             Plan · Trade · Review

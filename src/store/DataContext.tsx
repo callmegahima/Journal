@@ -123,7 +123,7 @@ const emptyData = (): AppData => ({
 function serializeBackup(data: AppData): string {
   return JSON.stringify(
     {
-      app: 'PA Trading Journal',
+      app: 'My Trading Journal',
       version: SETTINGS_VERSION,
       exportedAt: nowIso(),
       data,

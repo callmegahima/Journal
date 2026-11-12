@@ -1,4 +1,4 @@
--- PA Trading Journal — Supabase schema
+-- My Trading Journal — Supabase schema
 -- Run this once in Supabase: Dashboard → SQL Editor → New query → paste → Run.
 --
 -- Privacy model: every row carries the owner's user id, and Row Level Security (RLS)

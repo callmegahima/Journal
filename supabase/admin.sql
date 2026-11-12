@@ -1,4 +1,4 @@
--- PA Trading Journal — admin dashboard
+-- My Trading Journal — admin dashboard
 -- Run once in Supabase: Dashboard → SQL Editor → New query → paste → Run (after schema.sql).
 --
 -- Security model:

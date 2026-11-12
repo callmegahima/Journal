@@ -1668,7 +1668,7 @@ export function SettingsPage() {
       />
 
       <div className="pb-2 text-[10px] leading-relaxed text-dim">
-        PA Trading Journal · local-first, manual trading journal · {timezoneShort(settings.timezone)}{' '}
+        My Trading Journal · local-first, manual trading journal · {timezoneShort(settings.timezone)}{' '}
         · all amounts in USD. This app does not execute trades or connect to a broker.
       </div>
     </div>

@@ -44,7 +44,7 @@ export function LockScreen() {
         <div className="mb-6 flex flex-col items-center text-center">
           <LogoMark size={52} />
           <h1 className="mt-4 text-lg font-semibold tracking-tight text-fg">
-            PA Trading Journal
+            My Trading Journal
           </h1>
           <p className="mt-1 text-xs text-muted">
             Welcome back{data.settings.displayName ? `, ${data.settings.displayName}` : ''}.

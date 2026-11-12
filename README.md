@@ -1,4 +1,4 @@
-# PA Trading Journal
+# My Trading Journal
 
 A local-first manual trading plan and journal for XAUUSD (Gold), built around Price Action and
 Support/Resistance. It is a planning and review tool only — it never connects to a broker, places

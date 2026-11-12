@@ -328,7 +328,7 @@ function Topbar({ onMenu }: { onMenu: () => void }) {
         <div className="min-w-0">
           <div className="truncate text-[12px] font-semibold text-fg">{current}</div>
           <div className="hidden text-[9px] uppercase tracking-[0.1em] text-dim sm:block">
-            PA Trading Journal
+            My Trading Journal
           </div>
         </div>
       </div>
