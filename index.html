@@ -6,6 +6,25 @@
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0B1120" />
+    <script>
+      ;(function () {
+        try {
+          var stored = localStorage.getItem('pa-journal-theme')
+          var theme =
+            stored === 'light' || stored === 'dark'
+              ? stored
+              : window.matchMedia('(prefers-color-scheme: light)').matches
+                ? 'light'
+                : 'dark'
+          var root = document.documentElement
+          root.dataset.theme = theme
+          root.classList.toggle('dark', theme === 'dark')
+          root.style.colorScheme = theme
+          var meta = document.querySelector('meta[name="theme-color"]')
+          if (meta) meta.setAttribute('content', theme === 'light' ? '#F4F6FA' : '#0B1120')
+        } catch (error) {}
+      })()
+    </script>
     <meta
       name="description"
       content="PA Trading Journal — a private, local-first trading plan, journal, checklist and analytics workspace for manual price action traders."

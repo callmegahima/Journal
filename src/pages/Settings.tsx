@@ -7,6 +7,8 @@ import {
   Eye,
   EyeOff,
   FileJson,
+  FolderOpen,
+  FolderSync,
   Gauge,
   HardDrive,
   Info,
@@ -14,8 +16,11 @@ import {
   Lock,
   LockKeyhole,
   Plus,
+  RefreshCw,
+  Save,
   ShieldCheck,
   Trash2,
+  Unplug,
   Upload,
   User,
   Wrench,
@@ -44,9 +49,17 @@ import {
 } from '@/lib/auth'
 import { storageEstimate } from '@/lib/db'
 import { downloadFile, tradesToCsv } from '@/lib/csv'
-import { TIMEZONE_OPTIONS, timezoneShort, todayKey } from '@/lib/dates'
+import { AUTO_BACKUP_FILE } from '@/lib/autosave'
+import { TIMEZONE_OPTIONS, formatDateTime, timezoneShort, todayKey } from '@/lib/dates'
 import { money, num } from '@/lib/format'
 import { uid } from '@/lib/utils'
+import {
+  calculatePnl,
+  calculateTradeRisk,
+  roundTo,
+  tickValueFor,
+  valuePerPriceUnit,
+} from '@/lib/calc'
 
 type SettingsTab = 'account' | 'risk' | 'instruments' | 'security' | 'data'
 
@@ -64,7 +77,19 @@ function SectionNote({ children }: { children: ReactNode }) {
 }
 
 export function SettingsPage() {
-  const { data, saveSettings, exportData, importData, resetAll } = useData()
+  const {
+    data,
+    saveSettings,
+    exportData,
+    importData,
+    resetAll,
+    autoBackup,
+    chooseAutoBackupFolder,
+    reconnectAutoBackupFolder,
+    disconnectAutoBackupFolder,
+    saveAutoBackupNow,
+    saveTrade,
+  } = useData()
   const { toast } = useToast()
   const { settings, trades, plans, checklists, psych, events, reflections } = data
   const [tab, setTab] = useState<SettingsTab>('account')
@@ -84,6 +109,7 @@ export function SettingsPage() {
     dailyLossLimitPct: settings.dailyLossLimitPct,
     weeklyLossLimitPct: settings.weeklyLossLimitPct,
     minRR: settings.minRR,
+    leverage: settings.leverage,
   })
   const [instruments, setInstruments] = useState<InstrumentSpec[]>(
     settings.instruments.map((instrument) => ({ ...instrument })),
@@ -117,6 +143,7 @@ export function SettingsPage() {
       dailyLossLimitPct: settings.dailyLossLimitPct,
       weeklyLossLimitPct: settings.weeklyLossLimitPct,
       minRR: settings.minRR,
+      leverage: settings.leverage,
     })
     setInstruments(settings.instruments.map((instrument) => ({ ...instrument })))
     setActiveInstrumentId(settings.activeInstrumentId)
@@ -171,6 +198,10 @@ export function SettingsPage() {
       toast('Minimum reward-to-risk must be greater than zero.', 'error')
       return
     }
+    if (!(risk.leverage > 0)) {
+      toast('Account leverage must be greater than zero (e.g. 100 for 1:100).', 'error')
+      return
+    }
     await saveSettings(risk)
     toast('Risk rules saved.', 'success')
   }
@@ -178,7 +209,12 @@ export function SettingsPage() {
   const updateInstrument = (id: string, patch: Partial<InstrumentSpec>) => {
     setInstruments((current) =>
       current.map((instrument) =>
-        instrument.id === id ? { ...instrument, ...patch } : instrument,
+        instrument.id === id
+          ? (() => {
+              const next = { ...instrument, ...patch }
+              return { ...next, tickValue: tickValueFor(next) }
+            })()
+          : instrument,
       ),
     )
   }
@@ -197,6 +233,45 @@ export function SettingsPage() {
     }
     setInstruments((current) => [...current, next])
     setActiveInstrumentId((current) => current || next.id)
+  }
+
+  const [recalcOpen, setRecalcOpen] = useState(false)
+
+  const recalculateTrades = async () => {
+    const specs = data.settings.instruments
+    let updated = 0
+    for (const trade of data.trades) {
+      const spec = specs.find((s) => s.id === trade.instrumentId)
+      if (!spec || !(trade.lots > 0)) continue
+      const { pnl, result } = calculatePnl({
+        direction: trade.direction,
+        entry: trade.entry,
+        exit: trade.exit,
+        lots: trade.lots,
+        spec,
+        commission: trade.commission,
+        swap: trade.swap,
+      })
+      const grossPnl = calculatePnl({
+        direction: trade.direction,
+        entry: trade.entry,
+        exit: trade.exit,
+        lots: trade.lots,
+        spec,
+      }).gross
+      const riskAmount = calculateTradeRisk(trade.entry, trade.sl, trade.lots, spec)
+      const rMultiple = riskAmount > 0 ? roundTo(pnl / riskAmount, 2) : 0
+      if (pnl === trade.pnl && riskAmount === trade.riskAmount) continue
+      await saveTrade({ ...trade, grossPnl, pnl, result, riskAmount, rMultiple })
+      updated += 1
+    }
+    setRecalcOpen(false)
+    toast(
+      updated > 0
+        ? `Recalculated P/L for ${updated} trade${updated === 1 ? '' : 's'}.`
+        : 'All trades already match the contract specification.',
+      'success',
+    )
   }
 
   const saveInstruments = async () => {
@@ -349,6 +424,56 @@ export function SettingsPage() {
       'text/csv;charset=utf-8',
     )
     toast(`Exported ${trades.length} trades to CSV.`, 'success')
+  }
+
+  const connectBackupFolder = async () => {
+    try {
+      await chooseAutoBackupFolder()
+      toast('Folder connected. The backup file will be kept up to date.', 'success')
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') return
+      toast(
+        error instanceof Error ? error.message : 'Could not connect that folder.',
+        'error',
+      )
+    }
+  }
+
+  const reconnectBackupFolder = async () => {
+    try {
+      await reconnectAutoBackupFolder()
+      toast('Folder access restored. Backup updated.', 'success')
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') return
+      toast(
+        error instanceof Error ? error.message : 'Could not restore folder access.',
+        'error',
+      )
+    }
+  }
+
+  const saveBackupNow = async () => {
+    try {
+      const ok = await saveAutoBackupNow()
+      toast(
+        ok ? 'Backup file updated.' : 'The backup file could not be updated.',
+        ok ? 'success' : 'error',
+      )
+    } catch (error) {
+      toast(
+        error instanceof Error ? error.message : 'The backup file could not be updated.',
+        'error',
+      )
+    }
+  }
+
+  const disconnectBackupFolder = async () => {
+    try {
+      await disconnectAutoBackupFolder()
+      toast('Automatic folder backup turned off. The existing file was left in place.', 'info')
+    } catch {
+      toast('Could not disconnect the backup folder.', 'error')
+    }
   }
 
   const handleFile = async (file: File | undefined) => {
@@ -606,6 +731,17 @@ export function SettingsPage() {
                 suffix="R"
                 hint="A 1:2 minimum means the target must be at least twice the stop distance."
               />
+              <NumberField
+                label="Account leverage"
+                value={risk.leverage}
+                onChange={(value) =>
+                  setRisk((current) => ({ ...current, leverage: value ?? 0 }))
+                }
+                min={1}
+                step={1}
+                prefix="1:"
+                hint="Same as in MT5. Used only for the margin estimate: lots × contract size × price ÷ leverage."
+              />
               <div className="rounded-lg border border-line/80 bg-ink/40 p-3">
                 <div className="text-[10px] uppercase tracking-[0.08em] text-dim">
                   Daily vs weekly
@@ -688,7 +824,19 @@ export function SettingsPage() {
               <Button variant="primary" onClick={saveInstruments}>
                 Save instrument settings
               </Button>
+              <Button variant="soft" onClick={() => setRecalcOpen(true)}>
+                Recalculate all trades
+              </Button>
             </div>
+            <ConfirmDialog
+              open={recalcOpen}
+              onClose={() => setRecalcOpen(false)}
+              onConfirm={recalculateTrades}
+              title="Recalculate P/L for all trades?"
+              description="Every trade's P/L, risk and R multiple will be recomputed as (exit − entry) × contract size × lots using the saved instrument settings. Commission and swap saved on each trade are kept; manually typed P/L values are replaced. Export a backup first if you want to keep the old values."
+              confirmLabel="Recalculate"
+              tone="primary"
+            />
           </div>
 
           {instruments.map((instrument) => {
@@ -783,14 +931,13 @@ export function SettingsPage() {
                   />
                   <NumberField
                     label="Tick value"
-                    value={instrument.tickValue}
-                    onChange={(value) =>
-                      updateInstrument(instrument.id, { tickValue: value ?? 0 })
-                    }
+                    value={tickValueFor(instrument)}
+                    onChange={() => {}}
+                    disabled
                     min={0}
                     step={0.01}
                     prefix="$"
-                    hint="USD per tick per lot"
+                    hint="Auto: contract size × tick size"
                   />
                   <NumberField
                     label="Minimum lot"
@@ -821,8 +968,8 @@ export function SettingsPage() {
                   />
                 </div>
                 <div className="border-t border-line px-4 py-2.5 text-[10px] text-dim">
-                  Value per 1.00 price move: {money(instrument.tickValue / instrument.tickSize)} per
-                  lot · {instrument.tickSize > 0 ? num(1 / instrument.tickSize, 0) : '—'} ticks per
+                  Value per 1.00 price move: {money(valuePerPriceUnit(instrument))} per
+                  lot ({money(valuePerPriceUnit(instrument) * 0.01)} at 0.01 lot) · {instrument.tickSize > 0 ? num(1 / instrument.tickSize, 0) : '—'} ticks per
                   price unit
                 </div>
               </Card>
@@ -1017,6 +1164,116 @@ export function SettingsPage() {
               </div>
             </Card>
           </div>
+
+          <Card>
+            <CardHeader
+              title="Automatic backup to this computer"
+              subtitle="Connect a folder and the journal keeps a JSON backup file up to date there."
+              icon={<FolderSync size={14} />}
+              action={
+                <Badge
+                  variant={
+                    !autoBackup.supported
+                      ? 'slate'
+                      : !autoBackup.connected
+                        ? 'slate'
+                        : autoBackup.permission === 'granted'
+                          ? 'green'
+                          : 'amber'
+                  }
+                >
+                  {!autoBackup.supported
+                    ? 'Not supported'
+                    : !autoBackup.connected
+                      ? 'Off'
+                      : autoBackup.permission === 'granted'
+                        ? 'Connected'
+                        : 'Needs permission'}
+                </Badge>
+              }
+            />
+            <div className="space-y-3 p-4">
+              {!autoBackup.supported ? (
+                <InfoNote tone="amber" icon={<AlertTriangle size={12} />}>
+                  This browser cannot save directly to a folder. Use Chrome or Edge on a desktop
+                  computer, or export a backup manually.
+                </InfoNote>
+              ) : (
+                <>
+                  {autoBackup.connected ? (
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
+                      <span className="flex items-center gap-1.5 text-fg">
+                        <FolderOpen size={12} className="text-accent" />
+                        <span className="font-mono">{autoBackup.folderName}</span>
+                      </span>
+                      <span className="font-mono text-dim">/ {AUTO_BACKUP_FILE}</span>
+                      {autoBackup.lastSavedAt ? (
+                        <span className="text-dim">
+                          Last saved{' '}
+                          {formatDateTime(
+                            autoBackup.lastSavedAt,
+                            settings.timezone,
+                            'yyyy-MM-dd HH:mm',
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-dim">Not saved yet</span>
+                      )}
+                      {autoBackup.saving ? <span className="text-accent">Saving…</span> : null}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] leading-relaxed text-muted">
+                      Pick a folder once. The journal then keeps{' '}
+                      <span className="font-mono text-fg">{AUTO_BACKUP_FILE}</span> up to date there.
+                      The file is a normal JSON backup you can restore from Import below.
+                    </p>
+                  )}
+
+                  {autoBackup.error ? (
+                    <InfoNote tone="red" icon={<AlertTriangle size={12} />}>
+                      {autoBackup.error}
+                    </InfoNote>
+                  ) : null}
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    {!autoBackup.connected ? (
+                      <Button variant="primary" onClick={() => void connectBackupFolder()}>
+                        <FolderOpen size={14} /> Choose folder
+                      </Button>
+                    ) : (
+                      <>
+                        {autoBackup.permission !== 'granted' ? (
+                          <Button variant="primary" onClick={() => void reconnectBackupFolder()}>
+                            <RefreshCw size={14} /> Restore access
+                          </Button>
+                        ) : null}
+                        <Button
+                          variant="soft"
+                          onClick={() => void saveBackupNow()}
+                          disabled={autoBackup.saving}
+                        >
+                          <Save size={14} /> Save now
+                        </Button>
+                        <Button variant="soft" onClick={() => void connectBackupFolder()}>
+                          <FolderSync size={14} /> Change folder
+                        </Button>
+                        <Button variant="ghost" onClick={() => void disconnectBackupFolder()}>
+                          <Unplug size={14} /> Disconnect
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="border-t border-line px-4 py-3">
+              <InfoNote tone="blue" icon={<Info size={12} />}>
+                The browser may ask for folder access again after a reload — click Restore access.
+                The backup file is not encrypted, so store it like any other private financial
+                record.
+              </InfoNote>
+            </div>
+          </Card>
 
           <Card>
             <CardHeader

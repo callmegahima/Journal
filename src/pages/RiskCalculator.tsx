@@ -30,8 +30,12 @@ import {
 import { NumberField } from '@/components/ui/form'
 import { StatCard } from '@/components/ui/StatCard'
 import {
+  calculateMargin,
+  calculatePnl,
   calculatePosition,
   pointsFromPrice,
+  tickValueFor,
+  valuePerPriceUnit,
   type PositionResult,
 } from '@/lib/calc'
 import { computeRiskStatus } from '@/lib/metrics'
@@ -114,7 +118,9 @@ export function RiskCalculatorPage() {
   const [entry, setEntry] = useState<number | null>(null)
   const [sl, setSl] = useState<number | null>(null)
   const [tp, setTp] = useState<number | null>(null)
+  const [exitPrice, setExitPrice] = useState<number | null>(null)
   const [manualLots, setManualLots] = useState<number | null>(null)
+  const [lotsForExit, setLotsForExit] = useState<number | null>(null)
 
   const riskStatus = useMemo(
     () => computeRiskStatus(trades, settings, tz),
@@ -149,6 +155,19 @@ export function RiskCalculatorPage() {
   ])
 
   const digits = spec ? decimalsForTick(spec.tickSize) : 2
+
+  // Lots used for the exit/profit box: the calculated position, or a lot size typed there.
+  const exitLots =
+    lotsForExit != null && lotsForExit > 0 ? lotsForExit : position && position.lots > 0 ? position.lots : 0
+  const exitResult = useMemo(
+    () =>
+      spec && entry != null && exitPrice != null && exitLots > 0
+        ? calculatePnl({ direction, entry, exit: exitPrice, lots: exitLots, spec })
+        : null,
+    [spec, entry, exitPrice, exitLots, direction],
+  )
+  const exitRisk = position && position.slDistance > 0 && spec ? position.slDistance * position.valuePerUnit * exitLots : 0
+  const margin = spec ? calculateMargin(exitLots || position?.lots || 0, entry, spec, settings.leverage) : 0
   const blockers = useMemo(() => {
     const list: string[] = []
     if (!position) {
@@ -241,7 +260,9 @@ export function RiskCalculatorPage() {
     setEntry(null)
     setSl(null)
     setTp(null)
+    setExitPrice(null)
     setManualLots(null)
+    setLotsForExit(null)
   }
 
   const useEquity = () => setBalance(Math.round(equity * 100) / 100)
@@ -560,6 +581,134 @@ export function RiskCalculatorPage() {
                 />
               </div>
 
+              <div className="rounded-xl border border-accent/25 bg-accent/[0.04] p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-semibold text-fg">Exit price → MT5 profit</span>
+                  <span className="text-[9px] text-dim">
+                    ({direction === 'BUY' ? 'exit − entry' : 'entry − exit'}) × {spec?.contractSize ?? 100} × lots
+                  </span>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <NumberField
+                    label="Exit price"
+                    value={exitPrice}
+                    onChange={setExitPrice}
+                    min={0}
+                    placeholder="Where you closed / plan to close"
+                    hint={
+                      tp != null || sl != null ? (
+                        <span className="flex flex-wrap gap-2">
+                          {tp != null ? (
+                            <button
+                              type="button"
+                              className="font-medium text-accent-2 underline-offset-2 hover:underline"
+                              onClick={() => setExitPrice(tp)}
+                            >
+                              Use TP
+                            </button>
+                          ) : null}
+                          {sl != null ? (
+                            <button
+                              type="button"
+                              className="font-medium text-accent-2 underline-offset-2 hover:underline"
+                              onClick={() => setExitPrice(sl)}
+                            >
+                              Use SL
+                            </button>
+                          ) : null}
+                        </span>
+                      ) : (
+                        'Enter any price to see the exact profit or loss.'
+                      )
+                    }
+                  />
+                  <NumberField
+                    label="Lot size for this result"
+                    value={lotsForExit ?? (position && position.lots > 0 ? position.lots : null)}
+                    onChange={setLotsForExit}
+                    min={spec?.minLot ?? 0.01}
+                    step={spec?.lotStep ?? 0.01}
+                    suffix="lots"
+                    placeholder="0.01"
+                    hint={
+                      lotsForExit != null ? (
+                        <button
+                          type="button"
+                          className="font-medium text-accent-2 underline-offset-2 hover:underline"
+                          onClick={() => setLotsForExit(null)}
+                        >
+                          Use calculated size
+                        </button>
+                      ) : (
+                        'Defaults to the calculated position size.'
+                      )
+                    }
+                  />
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {[
+                    {
+                      label: 'Price move',
+                      value: exitResult
+                        ? `${exitResult.priceMove >= 0 ? '+' : ''}${exitResult.priceMove.toFixed(digits)}`
+                        : '—',
+                      sub: exitResult ? `${exitResult.points >= 0 ? '+' : ''}${exitResult.points} points` : 'points',
+                      tone: exitResult ? riskTone(exitResult.priceMove) : 'default',
+                    },
+                    {
+                      label: 'Profit (MT5)',
+                      value: exitResult ? moneySigned(exitResult.gross) : '—',
+                      sub: exitLots > 0 ? `${formatLots(exitLots)} lots` : 'enter lots',
+                      tone: exitResult ? riskTone(exitResult.gross) : 'default',
+                    },
+                    {
+                      label: 'Of balance',
+                      value: exitResult && balance > 0 ? pct((exitResult.gross / balance) * 100, 2) : '—',
+                      sub:
+                        exitResult && balance > 0 ? `→ ${money(balance + exitResult.gross)}` : 'balance after',
+                      tone: exitResult ? riskTone(exitResult.gross) : 'default',
+                    },
+                    {
+                      label: 'R multiple',
+                      value: exitResult && exitRisk > 0 ? rMultiple(exitResult.gross / exitRisk) : '—',
+                      sub: exitRisk > 0 ? `risk ${money(exitRisk)}` : sl == null ? 'needs stop loss' : 'needs lots',
+                      tone: exitResult ? riskTone(exitResult.gross) : 'default',
+                    },
+                  ].map((tile) => (
+                    <div
+                      key={tile.label}
+                      className="rounded-lg border border-line/80 bg-ink/40 px-2.5 py-2"
+                    >
+                      <div className="text-[9px] uppercase tracking-wide text-dim">{tile.label}</div>
+                      <div
+                        className={cn(
+                          'mt-0.5 font-mono text-[13px] font-semibold tabular-nums',
+                          tile.tone === 'profit'
+                            ? 'text-profit'
+                            : tile.tone === 'loss'
+                              ? 'text-loss'
+                              : 'text-fg',
+                        )}
+                      >
+                        {tile.value}
+                      </div>
+                      <div className="font-mono text-[9px] text-dim">{tile.sub}</div>
+                    </div>
+                  ))}
+                </div>
+                {exitResult == null ? (
+                  <p className="mt-2 text-[10px] text-dim">
+                    {entry == null
+                      ? 'Enter the entry price first.'
+                      : exitLots <= 0
+                        ? position && position.rawLots > 0
+                          ? `The risk-based size is below the ${spec ? formatLots(spec.minLot) : '0.01'} lot minimum — type a lot size above to see the result.`
+                          : 'Type a lot size above (or set a valid stop loss so the size is calculated).'
+                        : 'Enter an exit price to see the result.'}
+                  </p>
+                ) : null}
+              </div>
+
               <Divider />
 
               <div className="grid gap-3 sm:grid-cols-2">
@@ -867,9 +1016,21 @@ export function RiskCalculatorPage() {
                   hint="The win rate required at this R:R before costs."
                 />
                 <ResultRow
-                  label="Risk per point"
-                  value={spec ? money((spec.tickValue / spec.tickSize) * (position?.lots ?? 0)) : '—'}
-                  hint="Approximate USD move per 1.00 price unit at this size."
+                  label="Value per $1.00 move"
+                  value={spec ? money(valuePerPriceUnit(spec) * (position?.lots ?? 0)) : '—'}
+                  hint={
+                    spec
+                      ? `${money(tickValueFor(spec) * (position?.lots ?? 0))} per point (${spec.tickSize}) at this size.`
+                      : undefined
+                  }
+                />
+                <ResultRow
+                  label="Margin required"
+                  value={margin > 0 ? money(margin) : '—'}
+                  tone={margin > balance && balance > 0 ? 'warn' : 'default'}
+                  hint={`MT5: lots × ${spec?.contractSize ?? 100} × entry ÷ ${settings.leverage} (1:${settings.leverage} leverage, change in Settings).${
+                    margin > balance && balance > 0 ? ' Exceeds your balance — MT5 would reject this order.' : ''
+                  }`}
                 />
               </div>
             </div>
@@ -888,7 +1049,7 @@ export function RiskCalculatorPage() {
               {clear ? (
                 <div className="flex items-start gap-2 rounded-lg border border-profit/20 bg-profit/[0.06] px-3 py-2.5">
                   <ShieldCheck size={15} className="mt-0.5 shrink-0 text-profit" />
-                  <div className="text-[11px] leading-relaxed text-emerald-100/85">
+                  <div className="text-[11px] leading-relaxed text-profit">
                     <p className="font-semibold text-profit">Risk numbers are within your rules.</p>
                     <p className="mt-0.5 text-muted">
                       This does not mean the setup is valid. The PA + S&amp;R checklist and your own
@@ -901,7 +1062,7 @@ export function RiskCalculatorPage() {
                   {blockers.map((blocker) => (
                     <li
                       key={blocker}
-                      className="flex items-start gap-2 rounded-lg border border-loss/15 bg-loss/[0.04] px-2.5 py-2 text-[11px] leading-relaxed text-red-100/80"
+                      className="flex items-start gap-2 rounded-lg border border-loss/15 bg-loss/[0.04] px-2.5 py-2 text-[11px] leading-relaxed text-loss"
                     >
                       <AlertTriangle size={12} className="mt-0.5 shrink-0 text-loss" />
                       <span>{blocker}</span>
@@ -951,10 +1112,10 @@ export function RiskCalculatorPage() {
               <div className="divide-y divide-line/70 px-4 py-2">
                 <ResultRow label="Contract size" value={`${spec.contractSize} units`} />
                 <ResultRow label="Tick size" value={formatLots(spec.tickSize)} />
-                <ResultRow label="Tick value" value={money(spec.tickValue)} />
+                <ResultRow label="Tick value" value={money(tickValueFor(spec))} />
                 <ResultRow
                   label="Value per 1.00 move"
-                  value={money(spec.tickValue / spec.tickSize)}
+                  value={money(valuePerPriceUnit(spec))}
                 />
                 <ResultRow label="Minimum lot" value={formatLots(spec.minLot)} />
                 <ResultRow label="Lot step" value={formatLots(spec.lotStep)} />
@@ -970,8 +1131,9 @@ export function RiskCalculatorPage() {
           ) : null}
 
           <InfoNote tone="slate" icon={<Info size={12} />}>
-            Position size = risk amount ÷ (stop distance × value per price unit), then rounded down
-            to your lot step. Fees, spread and slippage are not included. The journal records what
+            Position size = risk amount ÷ (stop distance × contract size), rounded down to your lot
+            step like MT5 volume rules. Profit = price move × contract size × lots, rounded to cents.
+            Commission, swap, spread and slippage are not included. The journal records what
             actually happened, not what this calculator predicted.
           </InfoNote>
 

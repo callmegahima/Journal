@@ -115,6 +115,8 @@ export interface Settings {
   weeklyLossLimitPct: number
   maxRiskPct: number
   minRR: number
+  /** Account leverage, e.g. 100 for 1:100. Used for MT5 margin. */
+  leverage: number
   instruments: InstrumentSpec[]
   activeInstrumentId: string
   setups: SetupDef[]
@@ -161,7 +163,10 @@ export interface Trade {
   updatedAt: string
   planId?: string
   checklistId?: string
+  /** Open time (UTC ISO). */
   date: string
+  /** Close time (UTC ISO), optional. */
+  closeDate?: string
   instrumentId: string
   direction: Direction
   entry: number
@@ -170,6 +175,13 @@ export interface Trade {
   tp: number | null
   lots: number
   riskAmount: number
+  /** MT5 "Profit" column (price result before costs). */
+  grossPnl?: number
+  /** MT5 "Commission" column, signed (normally negative). */
+  commission?: number
+  /** MT5 "Swap" column, signed. */
+  swap?: number
+  /** Net result: profit + commission + swap. */
   pnl: number
   result: TradeResult
   rMultiple: number

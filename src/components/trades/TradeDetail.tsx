@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/primitives'
 import { ImageLightbox } from '@/components/ui/ImageUpload'
 import { formatDateTime, timezoneLabel } from '@/lib/dates'
+import { formatDuration } from '@/lib/metrics'
 import { average, lots as formatLots, money, pct, price, rMultiple } from '@/lib/format'
 import { plannedRR } from '@/lib/calc'
 import { cn } from '@/lib/utils'
@@ -159,6 +160,12 @@ export function TradeDetail({
                   ['Exit', price(trade.exit, 2)],
                   ['Stop Loss', price(trade.sl, 2)],
                   ['Take Profit', price(trade.tp, 2)],
+                  ['Lots', formatLots(trade.lots)],
+                  ['Points', String(Math.round((trade.direction === 'BUY' ? trade.exit - trade.entry : trade.entry - trade.exit) / (instrument?.tickSize || 0.01)))],
+                  ['MT5 profit', money(trade.grossPnl ?? trade.pnl - (trade.commission ?? 0) - (trade.swap ?? 0))],
+                  ['Commission', money(trade.commission ?? 0)],
+                  ['Swap', money(trade.swap ?? 0)],
+                  ['Net P/L', money(trade.pnl)],
                 ].map(([label, value]) => (
                   <div key={label} className="flex items-center justify-between gap-2">
                     <span className="text-dim">{label}</span>
@@ -184,6 +191,24 @@ export function TradeDetail({
                   <span className="text-dim">Setup</span>
                   <span className="text-right text-fg">{trade.setup}</span>
                 </div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-dim">Opened</span>
+                  <span className="text-fg">{formatDateTime(trade.date, data.settings.timezone, 'dd MMM yyyy · HH:mm')}</span>
+                </div>
+                {trade.closeDate ? (
+                  <>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-dim">Closed</span>
+                      <span className="text-fg">{formatDateTime(trade.closeDate, data.settings.timezone, 'dd MMM yyyy · HH:mm')}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-dim">Held</span>
+                      <span className="font-mono text-fg">
+                        {formatDuration((Date.parse(trade.closeDate) - Date.parse(trade.date)) / 60000)}
+                      </span>
+                    </div>
+                  </>
+                ) : null}
                 <div className="flex justify-between gap-2">
                   <span className="text-dim">Logged</span>
                   <span className="text-fg">{formatDateTime(trade.createdAt, data.settings.timezone, 'dd MMM yyyy · HH:mm')}</span>

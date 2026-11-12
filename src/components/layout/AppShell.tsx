@@ -24,6 +24,7 @@ import { money, moneySigned } from '@/lib/format'
 import { computeMetrics, computeRiskStatus } from '@/lib/metrics'
 import { clockTime, timezoneShort, todayKey } from '@/lib/dates'
 import { ProgressBar } from '@/components/ui/primitives'
+import { ThemeToggle } from '@/components/ui/ThemeToggle'
 
 interface NavItem {
   to: string
@@ -290,6 +291,7 @@ function Topbar({ onMenu }: { onMenu: () => void }) {
             )}
           </span>
         </div>
+        <ThemeToggle />
         <button
           type="button"
           onClick={() => navigate('/plan?new=1')}
@@ -323,7 +325,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen bg-ink">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-line bg-[#0a0f1c] lg:block">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-line bg-sidebar lg:block">
         <SidebarContent />
       </aside>
 
@@ -334,7 +336,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             onClick={() => setMobileOpen(false)}
             aria-hidden="true"
           />
-          <aside className="absolute inset-y-0 left-0 w-[280px] border-r border-line bg-[#0a0f1c] shadow-2xl animate-slide-up">
+          <aside className="absolute inset-y-0 left-0 w-[280px] border-r border-line bg-sidebar shadow-2xl animate-slide-up">
             <button
               type="button"
               onClick={() => setMobileOpen(false)}

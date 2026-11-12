@@ -20,12 +20,12 @@ import { money, moneyCompact, moneySigned, pct } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 const axis = {
-  tick: { fill: '#64748b', fontSize: 10 },
+  tick: { fill: 'var(--color-dim)', fontSize: 10 },
   axisLine: false,
   tickLine: false,
 } as const
 
-const gridStroke = '#1e293b'
+const gridStroke = 'var(--color-line)'
 
 function TipBox({
   title,
@@ -35,7 +35,7 @@ function TipBox({
   rows: { label: string; value: ReactNode; tone?: 'profit' | 'loss' | 'muted' }[]
 }) {
   return (
-    <div className="rounded-lg border border-line-2 bg-[#0d1526]/95 px-3 py-2 text-[11px] shadow-xl shadow-black/40 backdrop-blur">
+    <div className="rounded-lg border border-line-2 bg-tooltip/95 px-3 py-2 text-[11px] shadow-xl shadow-black/40 backdrop-blur">
       <div className="mb-1.5 font-semibold text-fg">{title}</div>
       <div className="space-y-1">
         {rows.map((row) => (
@@ -103,8 +103,8 @@ export function EquityChart({
         <AreaChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
           <defs>
             <linearGradient id="equityFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.28} />
-              <stop offset="100%" stopColor="#3b82f6" stopOpacity={0.01} />
+              <stop offset="0%" stopColor="var(--color-accent)" stopOpacity={0.28} />
+              <stop offset="100%" stopColor="var(--color-accent)" stopOpacity={0.01} />
             </linearGradient>
           </defs>
           <CartesianGrid stroke={gridStroke} strokeDasharray="3 3" vertical={false} />
@@ -116,7 +116,7 @@ export function EquityChart({
             domain={['auto', 'auto']}
           />
           <Tooltip
-            cursor={{ stroke: '#334155', strokeDasharray: '3 3' }}
+            cursor={{ stroke: 'var(--color-line-2)', strokeDasharray: '3 3' }}
             content={({ active, payload }) => {
               if (!active || !payload?.length) return null
               const point = payload[0]?.payload as EquityPoint | undefined
@@ -135,17 +135,17 @@ export function EquityChart({
           />
           <ReferenceLine
             y={startingBalance}
-            stroke="#475569"
+            stroke="var(--color-line-2)"
             strokeDasharray="4 4"
             strokeOpacity={0.7}
           />
           <Area
             type="monotone"
             dataKey="equity"
-            stroke="#3b82f6"
+            stroke="var(--color-accent)"
             strokeWidth={2}
             fill="url(#equityFill)"
-            activeDot={{ r: 3.5, fill: '#60a5fa', stroke: '#0b1120', strokeWidth: 2 }}
+            activeDot={{ r: 3.5, fill: 'var(--color-accent-2)', stroke: 'var(--color-ink)', strokeWidth: 2 }}
             dot={false}
           />
         </AreaChart>
@@ -189,12 +189,12 @@ export function DailyPnlChart({
               )
             }}
           />
-          <ReferenceLine y={0} stroke="#334155" />
+          <ReferenceLine y={0} stroke="var(--color-line-2)" />
           <Bar dataKey="pnl" radius={[4, 4, 2, 2]} maxBarSize={24}>
             {data.map((point) => (
               <Cell
                 key={point.date}
-                fill={point.pnl > 0 ? '#22c55e' : point.pnl < 0 ? '#ef4444' : '#334155'}
+                fill={point.pnl > 0 ? 'var(--color-profit)' : point.pnl < 0 ? 'var(--color-loss)' : 'var(--color-line-2)'}
                 fillOpacity={0.9}
               />
             ))}
@@ -240,12 +240,12 @@ export function MonthlyPnlChart({
               )
             }}
           />
-          <ReferenceLine y={0} stroke="#334155" />
+          <ReferenceLine y={0} stroke="var(--color-line-2)" />
           <Bar dataKey="pnl" radius={[4, 4, 2, 2]} maxBarSize={30}>
             {data.map((point) => (
               <Cell
                 key={point.month}
-                fill={point.pnl > 0 ? '#22c55e' : point.pnl < 0 ? '#ef4444' : '#334155'}
+                fill={point.pnl > 0 ? 'var(--color-profit)' : point.pnl < 0 ? 'var(--color-loss)' : 'var(--color-line-2)'}
                 fillOpacity={0.9}
               />
             ))}
@@ -272,9 +272,9 @@ export function WinLossDonut({
     return <ChartEmpty message="Win / loss distribution appears after your first trade." height={height} />
   }
   const data = [
-    { name: 'Wins', value: wins, color: '#22c55e' },
-    { name: 'Losses', value: losses, color: '#ef4444' },
-    { name: 'Breakeven', value: breakeven, color: '#475569' },
+    { name: 'Wins', value: wins, color: 'var(--color-profit)' },
+    { name: 'Losses', value: losses, color: 'var(--color-loss)' },
+    { name: 'Breakeven', value: breakeven, color: 'var(--color-dim)' },
   ].filter((entry) => entry.value > 0)
   const decided = wins + losses
   const winRate = decided > 0 ? (wins / decided) * 100 : null
@@ -326,7 +326,7 @@ export function WinLossDonut({
         {[
           { label: 'Wins', value: wins, color: 'bg-profit' },
           { label: 'Losses', value: losses, color: 'bg-loss' },
-          { label: 'Breakeven', value: breakeven, color: 'bg-slate-600' },
+          { label: 'Breakeven', value: breakeven, color: 'bg-dim' },
         ].map((entry) => (
           <div key={entry.label} className="flex items-center justify-between gap-3 text-[11px]">
             <span className="flex items-center gap-1.5 text-muted">
@@ -367,7 +367,7 @@ export function HorizontalPerformanceChart({
             dataKey="label"
             {...axis}
             width={118}
-            tick={{ fill: '#94a3b8', fontSize: 10 }}
+            tick={{ fill: 'var(--color-muted)', fontSize: 10 }}
           />
           <Tooltip
             cursor={{ fill: 'rgba(148,163,184,0.05)' }}
@@ -388,12 +388,12 @@ export function HorizontalPerformanceChart({
               )
             }}
           />
-          <ReferenceLine x={0} stroke="#334155" />
+          <ReferenceLine x={0} stroke="var(--color-line-2)" />
           <Bar dataKey="net" radius={[0, 4, 4, 0]} maxBarSize={18}>
             {data.map((stat) => (
               <Cell
                 key={stat.key}
-                fill={stat.net > 0 ? '#22c55e' : stat.net < 0 ? '#ef4444' : '#334155'}
+                fill={stat.net > 0 ? 'var(--color-profit)' : stat.net < 0 ? 'var(--color-loss)' : 'var(--color-line-2)'}
                 fillOpacity={0.88}
               />
             ))}
@@ -421,7 +421,7 @@ export function RMultipleChart({
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
           <CartesianGrid stroke={gridStroke} strokeDasharray="3 3" vertical={false} />
-          <XAxis dataKey="range" {...axis} interval={0} tick={{ fill: '#64748b', fontSize: 9 }} />
+          <XAxis dataKey="range" {...axis} interval={0} tick={{ fill: 'var(--color-dim)', fontSize: 9 }} />
           <YAxis {...axis} width={30} allowDecimals={false} />
           <Tooltip
             cursor={{ fill: 'rgba(148,163,184,0.05)' }}
@@ -446,10 +446,10 @@ export function RMultipleChart({
                 key={point.range}
                 fill={
                   point.range === 'Breakeven'
-                    ? '#475569'
+                    ? 'var(--color-dim)'
                     : positive.has(point.range)
-                      ? '#22c55e'
-                      : '#ef4444'
+                      ? 'var(--color-profit)'
+                      : 'var(--color-loss)'
                 }
                 fillOpacity={0.88}
               />

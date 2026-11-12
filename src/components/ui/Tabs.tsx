@@ -35,7 +35,7 @@ export function Tabs({
             {tab.icon}
             {tab.label}
             {tab.count != null ? (
-              <span className="rounded bg-black/20 px-1 py-0.5 font-mono text-[9px]">
+              <span className="rounded bg-ink/40 px-1 py-0.5 font-mono text-[9px]">
                 {tab.count}
               </span>
             ) : null}

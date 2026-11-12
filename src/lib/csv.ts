@@ -4,7 +4,9 @@ import { plannedRR } from '@/lib/calc'
 
 function escapeCsv(value: string | number | null | undefined): string {
   if (value == null) return ''
-  const str = String(value)
+  let str = String(value)
+  // Stop spreadsheet apps from running notes text as a formula (=, +, -, @ at the start).
+  if (typeof value === 'string' && /^[=+\-@\t\r]/.test(str)) str = `'${str}`
   if (/[",\n\r]/.test(str)) return `"${str.replace(/"/g, '""')}"`
   return str
 }
@@ -13,16 +15,20 @@ export function tradesToCsv(trades: Trade[], settings: Settings, tz: string): st
   const instrumentMap = new Map(settings.instruments.map((i) => [i.id, i.symbol]))
   const headers = [
     'Trade ID',
-    'Date',
+    'Open time',
     'Instrument',
     'Direction',
     'Entry',
     'Exit',
+    'Close time',
     'Stop Loss',
     'Take Profit',
     'Lots',
     'Risk USD',
-    'P/L USD',
+    'Profit USD',
+    'Commission USD',
+    'Swap USD',
+    'Net P/L USD',
     'Result',
     'R Multiple',
     'Planned RR',
@@ -49,10 +55,14 @@ export function tradesToCsv(trades: Trade[], settings: Settings, tz: string): st
         trade.direction,
         trade.entry,
         trade.exit,
+        trade.closeDate ? formatDateTime(trade.closeDate, tz, 'yyyy-MM-dd HH:mm') : '',
         trade.sl,
         trade.tp,
         trade.lots,
         trade.riskAmount,
+        trade.grossPnl ?? trade.pnl - (trade.commission ?? 0) - (trade.swap ?? 0),
+        trade.commission ?? 0,
+        trade.swap ?? 0,
         trade.pnl,
         trade.result,
         trade.rMultiple,

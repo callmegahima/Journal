@@ -7,6 +7,8 @@
   --color-panel-3: #1b2740;
   --color-line: #1e293b;
   --color-line-2: #2b3a52;
+  --color-sidebar: #0a0f1c;
+  --color-tooltip: #0d1526;
   --color-accent: #3b82f6;
   --color-accent-2: #60a5fa;
   --color-profit: #22c55e;
@@ -55,6 +57,47 @@
       transform: scale(1);
     }
   }
+}
+
+/* Light theme: the utilities above resolve through these CSS variables, so
+   flipping them here re-themes the whole app without touching components. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-ink: #f4f6fa;
+  --color-panel: #ffffff;
+  --color-panel-2: #f8fafc;
+  --color-panel-3: #eef2f7;
+  --color-line: #e2e8f0;
+  --color-line-2: #cbd5e1;
+  --color-sidebar: #ffffff;
+  --color-tooltip: #ffffff;
+  --color-accent: #2563eb;
+  --color-accent-2: #1d4ed8;
+  --color-profit: #15803d;
+  --color-loss: #dc2626;
+  --color-warn: #b45309;
+  --color-fg: #0f172a;
+  --color-muted: #475569;
+  --color-dim: #64748b;
+}
+
+:root[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-color: var(--color-ink);
+}
+
+:root[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+:root[data-theme="light"] .scroll-thin {
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+:root[data-theme="light"] .grid-lines {
+  background-image:
+    linear-gradient(to right, rgba(100, 116, 139, 0.1) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(100, 116, 139, 0.1) 1px, transparent 1px);
 }
 
 @layer base {

@@ -171,8 +171,9 @@ export function DashboardPage() {
             <div className="min-w-0 flex-1">
               <h2 className="text-[13px] font-semibold text-fg">Set up your journal properly</h2>
               <p className="mt-0.5 max-w-3xl text-[11px] leading-relaxed text-muted">
-                Your journal starts with a $50 USD balance, GMT+2 display time and an XAUUSD
-                template. These are starting points — not claims about your broker.
+                Your journal starts with a {money(settings.startingBalance)} USD balance,{' '}
+                {timezoneShort(tz)} display time and 1:{settings.leverage} leverage. Match these to
+                your MT5 account in Settings so every number lines up with your broker.
               </p>
               <div className="mt-3 grid gap-2 text-[11px] sm:grid-cols-2 lg:grid-cols-4">
                 {[
@@ -260,7 +261,9 @@ export function DashboardPage() {
           sub={
             metrics.decided === 0
               ? 'No decided trades yet'
-              : `${metrics.wins} wins of ${metrics.decided} decided`
+              : `${metrics.wins} of ${metrics.decided} decided · payoff ${
+                  metrics.payoffRatio == null ? '—' : metrics.payoffRatio.toFixed(2)
+                }`
           }
           tone="accent"
         />
@@ -285,7 +288,7 @@ export function DashboardPage() {
         <StatCard
           label="Expectancy"
           value={metrics.expectancy == null ? '—' : moneySigned(metrics.expectancy)}
-          sub={`Avg ${metrics.avgR == null ? '—' : rMultiple(metrics.avgR)} per trade`}
+          sub={`${metrics.expectancyR == null ? '—' : rMultiple(metrics.expectancyR)} per trade`}
           tone={
             metrics.expectancy == null
               ? 'default'
@@ -299,7 +302,7 @@ export function DashboardPage() {
         <StatCard
           label="Max drawdown"
           value={money(metrics.maxDrawdown)}
-          sub={pct(metrics.maxDrawdownPct, 1)}
+          sub={`${pct(metrics.maxDrawdownPct, 1)} · worst run ${metrics.maxConsecutiveLosses}L`}
           tone={metrics.maxDrawdown > 0 ? 'loss' : 'default'}
         />
       </div>

@@ -31,7 +31,7 @@ import { TradeFilterBar, FILTER_DEFAULTS } from '@/components/trades/TradeFilter
 import { TradeForm } from '@/components/trades/TradeForm'
 import { TradeDetail } from '@/components/trades/TradeDetail'
 import type { TradeFilters } from '@/lib/metrics'
-import { computeMetrics, filterTrades } from '@/lib/metrics'
+import { balanceBefore, computeMetrics, filterTrades } from '@/lib/metrics'
 import { formatDateTime, timezoneShort, todayKey } from '@/lib/dates'
 import { downloadFile, tradesToCsv } from '@/lib/csv'
 import { lots as formatLots, money, moneySigned, pct, price, rMultiple } from '@/lib/format'
@@ -127,8 +127,13 @@ export function JournalPage() {
   }, [searchFiltered, sort])
 
   const metrics = useMemo(
-    () => computeMetrics(filtered, settings.startingBalance, tz),
-    [filtered, settings.startingBalance, tz],
+    () =>
+      computeMetrics(
+        filtered,
+        balanceBefore(trades, filters.from, settings.startingBalance, tz),
+        tz,
+      ),
+    [filtered, trades, filters.from, settings.startingBalance, tz],
   )
   const hasFilters =
     Boolean(search) ||

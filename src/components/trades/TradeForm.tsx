@@ -32,15 +32,17 @@ import {
   decimalsForStep,
   plannedRR,
   resultFromPnl,
+  valuePerPriceUnit,
 } from '@/lib/calc'
 import { COMMON_MISTAKES } from '@/lib/defaults'
 import { isoToLocalInput, localInputToIso, nowIso, timezoneShort } from '@/lib/dates'
-import { formatInTimeZone } from 'date-fns-tz'
+import { formatDuration, sessionForInstant } from '@/lib/metrics'
 import { cn, uid } from '@/lib/utils'
-import { lots as formatLots, money, pct, price, rMultiple } from '@/lib/format'
+import { lots as formatLots, money, num, pct, price, rMultiple } from '@/lib/format'
 
 interface TradeDraftState {
   dateTime: string
+  closeDateTime: string
   instrumentId: string
   direction: Direction
   entry: number | null
@@ -48,7 +50,8 @@ interface TradeDraftState {
   sl: number | null
   tp: number | null
   lots: number | null
-  fees: number | null
+  commission: number | null
+  swap: number | null
   riskAmount: number | null
   pnl: number | null
   setup: string
@@ -64,11 +67,8 @@ interface TradeDraftState {
   checklistId?: string
 }
 
-function suggestedSession(tz: string): Session {
-  const hour = Number(formatInTimeZone(new Date(), tz, 'H'))
-  if (hour >= 8 && hour < 13) return 'London'
-  if (hour >= 13 && hour < 22) return 'New York'
-  return 'Asian'
+function suggestedSession(iso: string): Session {
+  return sessionForInstant(iso)
 }
 
 function makeDraft(
@@ -80,6 +80,7 @@ function makeDraft(
   if (trade) {
     return {
       dateTime: isoToLocalInput(trade.date, tz),
+      closeDateTime: trade.closeDate ? isoToLocalInput(trade.closeDate, tz) : '',
       instrumentId: trade.instrumentId,
       direction: trade.direction,
       entry: trade.entry,
@@ -87,7 +88,8 @@ function makeDraft(
       sl: trade.sl,
       tp: trade.tp,
       lots: trade.lots,
-      fees: null,
+      commission: trade.commission ?? null,
+      swap: trade.swap ?? null,
       riskAmount: trade.riskAmount,
       pnl: trade.pnl,
       setup: trade.setup,
@@ -107,20 +109,22 @@ function makeDraft(
   const activeSetups = settings.setups.filter((setup) => setup.active)
   return {
     dateTime: isoToLocalInput(plan?.dateTime ?? nowIso(), tz),
+    closeDateTime: '',
     instrumentId:
       plan?.instrumentId ?? settings.activeInstrumentId ?? settings.instruments[0]?.id ?? '',
-    direction: plan?.direction ?? 'BUY',
+    direction: plan?.direction === 'SELL' ? 'SELL' : 'BUY',
     entry: plan?.entry ?? null,
     exit: null,
     sl: plan?.sl ?? null,
     tp: plan?.tp ?? null,
     lots: plan?.lots && plan.lots > 0 ? plan.lots : null,
-    fees: null,
+    commission: null,
+    swap: null,
     riskAmount: plan?.riskAmount && plan.riskAmount > 0 ? plan.riskAmount : null,
     pnl: null,
     setup: plan?.setup ?? activeSetups[0]?.name ?? settings.setups[0]?.name ?? '',
     timeframe: plan?.timeframe ?? 'M15',
-    session: plan?.session ?? suggestedSession(tz),
+    session: plan?.session ?? suggestedSession(plan?.dateTime ?? nowIso()),
     reasonEntry: plan?.reasoning ?? '',
     reasonExit: '',
     mistakes: [],
@@ -146,8 +150,30 @@ export function TradeForm({
   const settings = data.settings
   const tz = settings.timezone
   const [draft, setDraft] = useState<TradeDraftState>(() => makeDraft(trade, plan, settings))
-  const [riskTouched, setRiskTouched] = useState(Boolean(trade))
-  const [pnlTouched, setPnlTouched] = useState(Boolean(trade))
+  // An existing trade only counts as "manual" when its stored numbers differ from the
+  // MT5 formula, so editing entry/exit/lots keeps updating P/L automatically.
+  const [riskTouched, setRiskTouched] = useState(() => {
+    if (!trade) return false
+    const spec = settings.instruments.find((item) => item.id === trade.instrumentId)
+    if (!spec) return true
+    return Math.abs(calculateTradeRisk(trade.entry, trade.sl, trade.lots, spec) - trade.riskAmount) > 0.01
+  })
+  const [pnlTouched, setPnlTouched] = useState(() => {
+    if (!trade) return false
+    const spec = settings.instruments.find((item) => item.id === trade.instrumentId)
+    if (!spec) return true
+    const calc = calculatePnl({
+      direction: trade.direction,
+      entry: trade.entry,
+      exit: trade.exit,
+      lots: trade.lots,
+      spec,
+      commission: trade.commission,
+      swap: trade.swap,
+    })
+    return Math.abs(calc.pnl - trade.pnl) > 0.01
+  })
+  const [sessionTouched, setSessionTouched] = useState(Boolean(trade || plan?.session))
   const [customMistake, setCustomMistake] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -186,10 +212,20 @@ export function TradeForm({
             exit: draft.exit,
             lots: draft.lots ?? 0,
             spec: instrument,
-            fees: draft.fees ?? 0,
+            commission: draft.commission,
+            swap: draft.swap,
           })
-        : { gross: 0, fees: 0, pnl: 0, result: 'Breakeven' as TradeResult },
-    [instrument, draft.direction, draft.entry, draft.exit, draft.lots, draft.fees],
+        : {
+            gross: 0,
+            fees: 0,
+            commission: 0,
+            swap: 0,
+            pnl: 0,
+            result: 'Breakeven' as TradeResult,
+            priceMove: 0,
+            points: 0,
+          },
+    [instrument, draft.direction, draft.entry, draft.exit, draft.lots, draft.commission, draft.swap],
   )
   const pnlValue = pnlTouched ? draft.pnl : calculatedPnl.pnl
   const effectivePnl = pnlValue ?? 0
@@ -202,6 +238,25 @@ export function TradeForm({
       settings.startingBalance + data.trades.reduce((sum, item) => sum + item.pnl, 0),
     [settings.startingBalance, data.trades],
   )
+
+  const lotIssue = useMemo(() => {
+    if (!instrument || draft.lots == null || !(draft.lots > 0)) return null
+    if (draft.lots < instrument.minLot - 1e-9)
+      return `Lot size must be at least ${formatLots(instrument.minLot)} (MT5 minimum volume).`
+    if (draft.lots > instrument.maxLot + 1e-9)
+      return `Lot size cannot exceed ${formatLots(instrument.maxLot)} (MT5 maximum volume).`
+    const steps = draft.lots / instrument.lotStep
+    if (Math.abs(steps - Math.round(steps)) > 1e-6)
+      return `Lot size must be a multiple of ${formatLots(instrument.lotStep)} (MT5 volume step).`
+    return null
+  }, [instrument, draft.lots])
+
+  const holdMinutes = useMemo(() => {
+    if (!draft.dateTime || !draft.closeDateTime) return null
+    const open = Date.parse(localInputToIso(draft.dateTime, tz))
+    const close = Date.parse(localInputToIso(draft.closeDateTime, tz))
+    return Number.isFinite(open) && Number.isFinite(close) ? (close - open) / 60000 : null
+  }, [draft.dateTime, draft.closeDateTime, tz])
 
   const patch = (partial: Partial<TradeDraftState>) =>
     setDraft((current) => ({ ...current, ...partial }))
@@ -236,6 +291,14 @@ export function TradeForm({
       toast(`Complete these fields first: ${missing.join(', ')}.`, 'error')
       return
     }
+    if (lotIssue) {
+      toast(lotIssue, 'error')
+      return
+    }
+    if (holdMinutes != null && holdMinutes < 0) {
+      toast('The close time is before the open time.', 'error')
+      return
+    }
 
     const seq = trade?.seq ?? data.trades.reduce((max, item) => Math.max(max, item.seq), 0) + 1
     const nextTrade: Trade = {
@@ -246,6 +309,7 @@ export function TradeForm({
       planId: draft.planId,
       checklistId: draft.checklistId,
       date: localInputToIso(draft.dateTime, tz),
+      closeDate: draft.closeDateTime ? localInputToIso(draft.closeDateTime, tz) : undefined,
       instrumentId: draft.instrumentId,
       direction: draft.direction,
       entry: draft.entry ?? 0,
@@ -254,6 +318,9 @@ export function TradeForm({
       tp: draft.tp,
       lots: draft.lots ?? 0,
       riskAmount: effectiveRisk,
+      grossPnl: calculatedPnl.gross,
+      commission: draft.commission ?? 0,
+      swap: draft.swap ?? 0,
       pnl: effectivePnl,
       result,
       rMultiple: rValue,
@@ -354,7 +421,7 @@ export function TradeForm({
         <div className="min-w-0 space-y-4">
           {linkedPlan ? (
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-accent/20 bg-accent/[0.05] px-3.5 py-2.5">
-              <div className="flex items-center gap-2 text-[11px] text-blue-100/80">
+              <div className="flex items-center gap-2 text-[11px] text-accent-2">
                 <Link2 size={13} className="text-accent-2" />
                 Linked plan: <span className="font-medium text-fg">{linkedPlan.setup}</span>
                 <span className="text-dim">· {linkedPlan.direction}</span>
@@ -387,13 +454,42 @@ export function TradeForm({
             </div>
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               <div>
-                <label className="label">Date & time ({timezoneShort(tz)})</label>
+                <label className="label">Open time ({timezoneShort(tz)})</label>
                 <input
                   type="datetime-local"
                   className="input"
                   value={draft.dateTime}
-                  onChange={(event) => patch({ dateTime: event.target.value })}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    patch(
+                      sessionTouched || !value
+                        ? { dateTime: value }
+                        : { dateTime: value, session: suggestedSession(localInputToIso(value, tz)) },
+                    )
+                  }}
                 />
+              </div>
+              <div>
+                <label className="label">Close time ({timezoneShort(tz)})</label>
+                <input
+                  type="datetime-local"
+                  className="input"
+                  value={draft.closeDateTime}
+                  min={draft.dateTime || undefined}
+                  onChange={(event) => patch({ closeDateTime: event.target.value })}
+                />
+                <p
+                  className={cn(
+                    'mt-1 text-[10px]',
+                    holdMinutes != null && holdMinutes < 0 ? 'text-loss' : 'text-dim',
+                  )}
+                >
+                  {holdMinutes == null
+                    ? 'Optional — used for holding-time stats.'
+                    : holdMinutes < 0
+                      ? 'Close time is before the open time.'
+                      : `Held ${formatDuration(holdMinutes)}`}
+                </p>
               </div>
               <div>
                 <label className="label">Instrument</label>
@@ -464,7 +560,10 @@ export function TradeForm({
                 <select
                   className="input"
                   value={draft.session}
-                  onChange={(event) => patch({ session: event.target.value as Session })}
+                  onChange={(event) => {
+                    setSessionTouched(true)
+                    patch({ session: event.target.value as Session })
+                  }}
                 >
                   {SESSIONS.map((session) => (
                     <option key={session} value={session}>
@@ -507,10 +606,18 @@ export function TradeForm({
                 suffix="USD"
               />
               <NumberField
-                label="Lot size"
+                label="Lot size (volume)"
                 value={draft.lots}
                 onChange={(value) => patch({ lots: value })}
                 suffix="lots"
+                min={instrument?.minLot ?? 0.01}
+                step={instrument?.lotStep ?? 0.01}
+                error={lotIssue}
+                hint={
+                  instrument && draft.lots && draft.lots > 0 && !lotIssue
+                    ? `${num(draft.lots * instrument.contractSize, 2)} oz · ${money(valuePerPriceUnit(instrument) * draft.lots)} per $1 move`
+                    : `Min ${formatLots(instrument?.minLot ?? 0.01)} · step ${formatLots(instrument?.lotStep ?? 0.01)}`
+                }
               />
               <NumberField
                 label="Risk amount"
@@ -523,18 +630,27 @@ export function TradeForm({
                 hint={
                   riskTouched
                     ? 'Manual risk amount — used for the R multiple.'
-                    : `Auto: SL distance × ${instrument?.tickValue ?? '—'} tick value × lots.`
+                    : `Auto: SL distance × ${instrument ? valuePerPriceUnit(instrument) : '—'} (contract size) × lots.`
                 }
               />
               <NumberField
-                label="Fees / commission"
-                value={draft.fees}
-                onChange={(value) => patch({ fees: value })}
+                label="Commission"
+                value={draft.commission}
+                onChange={(value) => patch({ commission: value })}
                 suffix="USD"
-                hint="Optional. Subtracted from the calculated P/L."
+                placeholder="-0.00"
+                hint="As shown in MT5 history (usually negative)."
               />
               <NumberField
-                label="Profit / loss"
+                label="Swap"
+                value={draft.swap}
+                onChange={(value) => patch({ swap: value })}
+                suffix="USD"
+                placeholder="0.00"
+                hint="Overnight swap from MT5 (+ or -)."
+              />
+              <NumberField
+                label="Net profit / loss"
                 value={pnlValue}
                 onChange={(value) => {
                   setPnlTouched(true)
@@ -550,8 +666,8 @@ export function TradeForm({
                 }
                 hint={
                   pnlTouched
-                    ? 'Using your actual P/L.'
-                    : 'Auto-calculated from entry, exit, lots and fees.'
+                    ? 'Manual P/L. Click "Use calculated values" to return to the MT5 formula.'
+                    : 'Auto: MT5 profit + commission + swap.'
                 }
               />
             </div>
@@ -576,7 +692,47 @@ export function TradeForm({
               </span>
             </div>
 
-            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+              <div className="rounded-lg border border-line/80 bg-ink/40 px-2.5 py-2">
+                <div className="text-[9px] uppercase tracking-wide text-dim">Price move</div>
+                <div
+                  className={cn(
+                    'mt-0.5 font-mono text-[13px] font-semibold',
+                    calculatedPnl.priceMove > 0
+                      ? 'text-profit'
+                      : calculatedPnl.priceMove < 0
+                        ? 'text-loss'
+                        : 'text-fg',
+                  )}
+                >
+                  {hasPriceResult
+                    ? `${calculatedPnl.priceMove >= 0 ? '+' : ''}${calculatedPnl.priceMove.toFixed(decimals)}`
+                    : '—'}
+                </div>
+                <div className="font-mono text-[9px] text-dim">
+                  {hasPriceResult
+                    ? `${calculatedPnl.points >= 0 ? '+' : ''}${calculatedPnl.points} points`
+                    : 'points'}
+                </div>
+              </div>
+              <div className="rounded-lg border border-line/80 bg-ink/40 px-2.5 py-2">
+                <div className="text-[9px] uppercase tracking-wide text-dim">MT5 profit</div>
+                <div
+                  className={cn(
+                    'mt-0.5 font-mono text-[13px] font-semibold',
+                    calculatedPnl.gross > 0
+                      ? 'text-profit'
+                      : calculatedPnl.gross < 0
+                        ? 'text-loss'
+                        : 'text-fg',
+                  )}
+                >
+                  {hasPriceResult
+                    ? `${calculatedPnl.gross >= 0 ? '+' : ''}${money(calculatedPnl.gross)}`
+                    : '—'}
+                </div>
+                <div className="font-mono text-[9px] text-dim">before commission & swap</div>
+              </div>
               <div className="rounded-lg border border-line/80 bg-ink/40 px-2.5 py-2">
                 <div className="text-[9px] uppercase tracking-wide text-dim">Result</div>
                 <div className="mt-1">
@@ -627,10 +783,10 @@ export function TradeForm({
             </div>
 
             <div className="mt-2 text-[10px] leading-relaxed text-dim">
-              Auto P/L is a price-based estimate for {instrument?.symbol ?? 'the instrument'} using{' '}
-              {instrument?.tickValue ?? '—'} USD per {instrument?.tickSize ?? '—'} price move per lot.
-              Spread, swap and broker-specific costs should be reflected in fees or the actual P/L
-              field.
+              MT5 formula for {instrument?.symbol ?? 'the instrument'}: BUY = (exit − entry), SELL =
+              (entry − exit), × {instrument ? valuePerPriceUnit(instrument) : '—'} (contract size) × lots,
+              rounded to cents. A $1 move is $1 at 0.01 lot, $10 at 0.10 lot and $100 at 1.00 lot.
+              Net P/L = profit + commission + swap, so it should match the MT5 history tab.
             </div>
           </section>
 
@@ -682,7 +838,7 @@ export function TradeForm({
                     className={cn(
                       'inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-medium transition',
                       active
-                        ? 'border-loss/40 bg-loss/10 text-red-200'
+                        ? 'border-loss/40 bg-loss/10 text-loss'
                         : 'border-line bg-ink/40 text-muted hover:border-line-2 hover:text-fg',
                     )}
                   >
@@ -714,7 +870,7 @@ export function TradeForm({
                 {draft.mistakes.map((mistake) => (
                   <div
                     key={mistake}
-                    className="flex items-center justify-between rounded-md bg-loss/[0.06] px-2 py-1 text-[10px] text-red-200/80"
+                    className="flex items-center justify-between rounded-md bg-loss/[0.06] px-2 py-1 text-[10px] text-loss/90"
                   >
                     <span className="flex items-center gap-1.5">
                       <AlertTriangle size={10} />

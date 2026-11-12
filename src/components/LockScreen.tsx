@@ -3,6 +3,7 @@ import { Eye, EyeOff, Lock, ShieldCheck } from 'lucide-react'
 import { LogoMark } from '@/components/Logo'
 import { useData } from '@/store/DataContext'
 import { Button } from '@/components/ui/primitives'
+import { ThemeToggle } from '@/components/ui/ThemeToggle'
 
 export function LockScreen() {
   const { data, unlock } = useData()
@@ -34,6 +35,9 @@ export function LockScreen() {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-ink px-4">
+      <div className="absolute right-4 top-4 z-10">
+        <ThemeToggle />
+      </div>
       <div className="pointer-events-none absolute inset-0 grid-lines opacity-60" />
       <div className="pointer-events-none absolute left-1/2 top-1/3 h-[420px] w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent/[0.07] blur-3xl" />
       <div className="relative w-full max-w-sm animate-slide-up">

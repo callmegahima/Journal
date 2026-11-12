@@ -1,8 +1,22 @@
 import type { Direction, InstrumentSpec, TradeResult } from '@/types'
 
+/**
+ * USD value of a 1.00 price move for 1.00 lot.
+ *
+ * For USD-quoted instruments such as XAUUSD this is simply the contract size:
+ * 1 lot = 100 oz, so a $1 move = $100 per lot (0.01 lot = $1, 0.10 lot = $10).
+ * Profit = price difference × contract size × lots.
+ */
 export function valuePerPriceUnit(spec: InstrumentSpec): number {
+  if (Number.isFinite(spec.contractSize) && spec.contractSize > 0) return spec.contractSize
   if (!Number.isFinite(spec.tickSize) || spec.tickSize <= 0) return 0
   return spec.tickValue / spec.tickSize
+}
+
+/** USD per tick per 1.00 lot, derived from contract size × tick size. */
+export function tickValueFor(spec: Pick<InstrumentSpec, 'contractSize' | 'tickSize'>): number {
+  if (!(spec.contractSize > 0) || !(spec.tickSize > 0)) return 0
+  return roundTo(spec.contractSize * spec.tickSize, 8)
 }
 
 export function decimalsForStep(step: number): number {
@@ -243,27 +257,69 @@ export interface PnlInput {
   exit: number | null
   lots: number
   spec: InstrumentSpec
+  /** Legacy single cost field — always treated as a cost (subtracted). */
   fees?: number
+  /** MT5 "Commission" column — signed, normally negative. */
+  commission?: number | null
+  /** MT5 "Swap" column — signed, positive or negative. */
+  swap?: number | null
 }
 
 export interface PnlResult {
+  /** MT5 "Profit" column: price difference × contract size × lots, rounded to cents. */
   gross: number
   fees: number
+  commission: number
+  swap: number
+  /** Net result = Profit + Commission + Swap − fees. */
   pnl: number
   result: TradeResult
+  /** Signed price move in the trade's favour (exit − entry for BUY, entry − exit for SELL). */
+  priceMove: number
+  /** Signed move in points (price move ÷ tick size). */
+  points: number
 }
 
+function finiteOr0(value: number | null | undefined): number {
+  return value != null && Number.isFinite(value) ? value : 0
+}
+
+/**
+ * MT5 profit for CFD/Forex-style USD-quoted symbols (e.g. XAUUSD on a USD account):
+ *   BUY  profit = (close − open) × contract size × lots
+ *   SELL profit = (open − close) × contract size × lots
+ * rounded to 2 decimals like the MT5 history tab, then commission and swap are added.
+ */
 export function calculatePnl(input: PnlInput): PnlResult {
-  const { direction, entry, exit, lots, spec, fees = 0 } = input
+  const { direction, entry, exit, lots, spec } = input
+  const fees = Math.abs(finiteOr0(input.fees))
+  const commission = roundTo(finiteOr0(input.commission), 2)
+  const swap = roundTo(finiteOr0(input.swap), 2)
   if (entry == null || exit == null || !Number.isFinite(entry) || !Number.isFinite(exit)) {
-    return { gross: 0, fees: 0, pnl: 0, result: 'Breakeven' }
+    const pnl = roundTo(commission + swap - fees, 2)
+    return { gross: 0, fees, commission, swap, pnl, result: resultFromPnl(pnl), priceMove: 0, points: 0 }
   }
   const vpp = valuePerPriceUnit(spec)
   const diff = direction === 'BUY' ? exit - entry : entry - exit
-  const gross = roundTo(diff * vpp * lots, 2)
-  const safeFees = Number.isFinite(fees) ? fees : 0
-  const pnl = roundTo(gross - Math.abs(safeFees), 2)
-  return { gross, fees: Math.abs(safeFees), pnl, result: resultFromPnl(pnl) }
+  const priceMove = roundTo(diff, decimalsForStep(spec.tickSize))
+  const gross = roundTo(priceMove * vpp * (Number.isFinite(lots) ? lots : 0), 2)
+  const pnl = roundTo(gross + commission + swap - fees, 2)
+  const points = spec.tickSize > 0 ? Math.round(priceMove / spec.tickSize) : 0
+  return { gross, fees, commission, swap, pnl, result: resultFromPnl(pnl), priceMove, points }
+}
+
+/**
+ * MT5 margin for CFD-leverage symbols such as XAUUSD:
+ *   margin = lots × contract size × open price ÷ leverage
+ */
+export function calculateMargin(
+  lots: number,
+  openPrice: number | null,
+  spec: InstrumentSpec,
+  leverage: number,
+): number {
+  if (openPrice == null || !(openPrice > 0) || !(lots > 0) || !(leverage > 0)) return 0
+  return roundTo((lots * spec.contractSize * openPrice) / leverage, 2)
 }
 
 export function calculateTradeRisk(

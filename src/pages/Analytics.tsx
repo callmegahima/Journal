@@ -40,7 +40,9 @@ import { TradeFilterBar, FILTER_DEFAULTS } from '@/components/trades/TradeFilter
 import type { GroupStat, TradeFilters } from '@/lib/metrics'
 import {
   checklistQuality,
+  balanceBefore,
   computeMetrics,
+  formatDuration,
   dailySeries,
   filterTrades,
   groupStats,
@@ -163,9 +165,15 @@ export function AnalyticsPage() {
   const [groupBy, setGroupBy] = useState<GroupKey>('setup')
 
   const filtered = useMemo(() => filterTrades(trades, filters, tz), [trades, filters, tz])
+  // A date-filtered report starts from the real balance on its first day, not the
+  // journal's starting balance.
+  const openingBalance = useMemo(
+    () => balanceBefore(trades, filters.from, settings.startingBalance, tz),
+    [trades, filters.from, settings.startingBalance, tz],
+  )
   const metrics = useMemo(
-    () => computeMetrics(filtered, settings.startingBalance, tz),
-    [filtered, settings.startingBalance, tz],
+    () => computeMetrics(filtered, openingBalance, tz),
+    [filtered, openingBalance, tz],
   )
   const daily = useMemo(
     () => dailySeries(filtered, tz, dailyWindow),
@@ -343,7 +351,11 @@ export function AnalyticsPage() {
                       ? 'loss'
                       : 'default'
               }
-              sub="Average net result per trade"
+              sub={
+                metrics.expectancyR == null
+                  ? 'Average net result per trade'
+                  : `${rMultiple(metrics.expectancyR)} per trade`
+              }
             />
             <StatCard
               label="Max drawdown"
@@ -377,7 +389,7 @@ export function AnalyticsPage() {
             <Card>
               <CardHeader
                 title="Equity curve"
-                subtitle={`Starting from ${money(settings.startingBalance)} and adding only recorded P/L, in ${timezoneShort(tz)}.`}
+                subtitle={`Starting from ${money(openingBalance)} and adding only recorded P/L, in ${timezoneShort(tz)}.`}
                 icon={<BarChart3 size={14} />}
                 action={
                   <Badge variant={metrics.netPnl >= 0 ? 'green' : 'red'}>
@@ -388,19 +400,19 @@ export function AnalyticsPage() {
               <div className="p-4">
                 <EquityChart
                   points={metrics.equity}
-                  startingBalance={settings.startingBalance}
+                  startingBalance={openingBalance}
                   height={280}
                 />
               </div>
               <div className="grid gap-2 border-t border-line p-4 sm:grid-cols-3">
-                <StatLine label="Current equity" value={money(metrics.balance)} />
+                <StatLine label="Ending balance" value={money(metrics.balance)} />
                 <StatLine
-                  label="Peak / worst streak"
-                  value={
+                  label="Current streak (best W / worst L)"
+                  value={`${
                     metrics.currentStreak.type === 'None'
                       ? '—'
                       : `${metrics.currentStreak.type} ${metrics.currentStreak.count}`
-                  }
+                  } (${metrics.maxConsecutiveWins}W / ${metrics.maxConsecutiveLosses}L)`}
                   tone={
                     metrics.currentStreak.type === 'Win'
                       ? 'profit'
@@ -717,7 +729,7 @@ export function AnalyticsPage() {
                     ))}
                   </div>
                 ) : (
-                  <div className="flex items-start gap-2 rounded-lg border border-profit/20 bg-profit/[0.05] px-3 py-2.5 text-[11px] leading-relaxed text-emerald-100/85">
+                  <div className="flex items-start gap-2 rounded-lg border border-profit/20 bg-profit/[0.05] px-3 py-2.5 text-[11px] leading-relaxed text-profit">
                     <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-profit" />
                     No mistakes tagged in the filtered trades.
                   </div>
@@ -742,7 +754,7 @@ export function AnalyticsPage() {
               <div className="grid gap-x-8 gap-y-1 p-4 sm:grid-cols-2">
                 <StatLine label="Trades in report" value={String(metrics.count)} />
                 <StatLine label="Net P/L" value={moneySigned(metrics.netPnl)} tone={qualityTone(metrics.netPnl)} />
-                <StatLine label="Starting balance" value={money(settings.startingBalance)} />
+                <StatLine label="Opening balance" value={money(openingBalance)} />
                 <StatLine label="Ending balance" value={money(metrics.balance)} />
                 <StatLine label="Gross profit" value={money(metrics.grossProfit)} tone="profit" />
                 <StatLine label="Gross loss" value={money(metrics.grossLoss)} tone="loss" />
@@ -753,6 +765,36 @@ export function AnalyticsPage() {
                 <StatLine
                   label="Breakeven trades"
                   value={String(metrics.breakeven)}
+                />
+                <StatLine
+                  label="Payoff ratio (avg win ÷ avg loss)"
+                  value={metrics.payoffRatio == null ? '—' : metrics.payoffRatio.toFixed(2)}
+                />
+                <StatLine
+                  label="Expectancy (R per trade)"
+                  value={metrics.expectancyR == null ? '—' : rMultiple(metrics.expectancyR)}
+                  tone={qualityTone(metrics.expectancyR ?? 0)}
+                />
+                <StatLine
+                  label="Max consecutive wins / losses"
+                  value={`${metrics.maxConsecutiveWins} / ${metrics.maxConsecutiveLosses}`}
+                />
+                <StatLine
+                  label="Max drawdown"
+                  value={
+                    metrics.maxDrawdown > 0
+                      ? `${money(metrics.maxDrawdown)} · ${pct(metrics.maxDrawdownPct, 1)}`
+                      : '—'
+                  }
+                  tone={metrics.maxDrawdown > 0 ? 'loss' : 'default'}
+                />
+                <StatLine
+                  label="Commission / swap paid"
+                  value={`${money(metrics.totalCommission)} / ${money(metrics.totalSwap)}`}
+                />
+                <StatLine
+                  label="Average holding time"
+                  value={formatDuration(metrics.avgHoldMinutes)}
                 />
                 <StatLine
                   label="Average planned R:R"

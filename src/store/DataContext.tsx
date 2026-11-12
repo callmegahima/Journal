@@ -20,15 +20,36 @@ import type {
 } from '@/types'
 import {
   clearAllData,
+  clearBackupFolder,
   loadAllData,
+  loadBackupFolder,
   persistRecord,
   persistSettings,
   removeRecord,
   replaceAllData,
+  saveBackupFolder,
 } from '@/lib/db'
 import { buildDefaultSettings, hydrateSettings, SETTINGS_VERSION } from '@/lib/defaults'
 import { verifyPasscode } from '@/lib/auth'
 import { nowIso } from '@/lib/dates'
+import {
+  folderPermission,
+  pickBackupFolder,
+  supportsAutoBackup,
+  writeAutoBackup,
+  type AutoBackupFolder,
+  type FolderPermission,
+} from '@/lib/autosave'
+
+export interface AutoBackupStatus {
+  supported: boolean
+  connected: boolean
+  folderName: string | null
+  permission: FolderPermission
+  lastSavedAt: string | null
+  saving: boolean
+  error: string | null
+}
 
 interface DataContextValue {
   data: AppData
@@ -51,6 +72,11 @@ interface DataContextValue {
   resetAll: () => Promise<void>
   exportData: () => string
   importData: (raw: string) => Promise<void>
+  autoBackup: AutoBackupStatus
+  chooseAutoBackupFolder: () => Promise<void>
+  reconnectAutoBackupFolder: () => Promise<void>
+  disconnectAutoBackupFolder: () => Promise<void>
+  saveAutoBackupNow: () => Promise<boolean>
   unlocked: boolean
   unlock: (passcode: string) => Promise<boolean>
   lockNow: () => void
@@ -65,6 +91,21 @@ const emptyData = (): AppData => ({
   events: [],
   reflections: [],
 })
+
+function serializeBackup(data: AppData): string {
+  return JSON.stringify(
+    {
+      app: 'PA Trading Journal',
+      version: SETTINGS_VERSION,
+      exportedAt: nowIso(),
+      data,
+    },
+    null,
+    2,
+  )
+}
+
+const AUTO_SAVE_DELAY = 800
 
 const DataContext = createContext<DataContextValue | null>(null)
 
@@ -122,12 +163,101 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [unlocked, setUnlocked] = useState(false)
+  const [autoBackup, setAutoBackup] = useState<AutoBackupStatus>(() => {
+    const supported = supportsAutoBackup()
+    return {
+      supported,
+      connected: false,
+      folderName: null,
+      permission: supported ? 'prompt' : 'denied',
+      lastSavedAt: null,
+      saving: false,
+      error: null,
+    }
+  })
   const dataRef = useRef(data)
+  const folderRef = useRef<AutoBackupFolder | null>(null)
+  const autoSaveTimer = useRef<number | null>(null)
+  const savingRef = useRef(false)
+  const dirtyRef = useRef(false)
+  const scheduleRef = useRef<() => void>(() => {})
 
-  const commit = useCallback((next: AppData) => {
-    dataRef.current = next
-    setData(next)
+  const runAutoSave = useCallback(async (): Promise<boolean> => {
+    const folder = folderRef.current
+    if (!folder) return false
+    if (savingRef.current) {
+      dirtyRef.current = true
+      return false
+    }
+    savingRef.current = true
+    setAutoBackup((current) => ({ ...current, saving: true }))
+    try {
+      const permission = await folderPermission(folder)
+      if (permission !== 'granted') {
+        setAutoBackup((current) => ({
+          ...current,
+          permission,
+          saving: false,
+          error:
+            permission === 'denied'
+              ? 'Folder access was denied. Choose the folder again to resume automatic backups.'
+              : null,
+        }))
+        return false
+      }
+      await writeAutoBackup(folder, serializeBackup(dataRef.current))
+      if (folderRef.current === folder) {
+        setAutoBackup((current) => ({
+          ...current,
+          permission: 'granted',
+          lastSavedAt: nowIso(),
+          saving: false,
+          error: null,
+        }))
+      }
+      return true
+    } catch (error) {
+      setAutoBackup((current) => ({
+        ...current,
+        saving: false,
+        error:
+          error instanceof DOMException && error.name === 'NotAllowedError'
+            ? 'Browser permission for the backup folder expired. Reconnect the folder to continue.'
+            : error instanceof Error
+              ? error.message
+              : 'The backup file could not be written.',
+      }))
+      return false
+    } finally {
+      savingRef.current = false
+      if (dirtyRef.current) {
+        dirtyRef.current = false
+        scheduleRef.current()
+      }
+    }
   }, [])
+
+  const scheduleAutoSave = useCallback(() => {
+    if (!folderRef.current) return
+    if (autoSaveTimer.current !== null) window.clearTimeout(autoSaveTimer.current)
+    autoSaveTimer.current = window.setTimeout(() => {
+      autoSaveTimer.current = null
+      void runAutoSave()
+    }, AUTO_SAVE_DELAY)
+  }, [runAutoSave])
+
+  useEffect(() => {
+    scheduleRef.current = scheduleAutoSave
+  }, [scheduleAutoSave])
+
+  const commit = useCallback(
+    (next: AppData) => {
+      dataRef.current = next
+      setData(next)
+      scheduleAutoSave()
+    },
+    [scheduleAutoSave],
+  )
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -137,6 +267,24 @@ export function DataProvider({ children }: { children: ReactNode }) {
       dataRef.current = loaded
       setData(loaded)
       setUnlocked(!loaded.settings.lock.enabled)
+
+      try {
+        const folder = await loadBackupFolder()
+        if (folder) {
+          folderRef.current = folder
+          const permission = await folderPermission(folder)
+          setAutoBackup((current) => ({
+            ...current,
+            connected: true,
+            folderName: folder.name,
+            permission,
+            error: null,
+          }))
+          if (permission === 'granted') void runAutoSave()
+        }
+      } catch {
+        // A missing or unreadable folder handle should not stop the journal loading.
+      }
     } catch (error) {
       setLoadError(
         error instanceof Error
@@ -146,11 +294,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [runAutoSave])
 
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(
+    () => () => {
+      if (autoSaveTimer.current !== null) window.clearTimeout(autoSaveTimer.current)
+    },
+    [],
+  )
 
   const saveSettings = useCallback(
     async (updater: Partial<Settings> | ((current: Settings) => Settings)) => {
@@ -379,18 +534,60 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setUnlocked(true)
   }, [commit])
 
-  const exportData = useCallback(() => {
-    return JSON.stringify(
-      {
-        app: 'PA Trading Journal',
-        version: SETTINGS_VERSION,
-        exportedAt: nowIso(),
-        data: dataRef.current,
-      },
-      null,
-      2,
-    )
+  const exportData = useCallback(() => serializeBackup(dataRef.current), [])
+
+  const chooseAutoBackupFolder = useCallback(async () => {
+    const folder = await pickBackupFolder()
+    const permission = await folderPermission(folder, true)
+    if (permission !== 'granted') {
+      throw new Error('Folder access was not granted, so automatic backups are still off.')
+    }
+    await saveBackupFolder(folder)
+    folderRef.current = folder
+    setAutoBackup((current) => ({
+      ...current,
+      connected: true,
+      folderName: folder.name,
+      permission: 'granted',
+      error: null,
+    }))
+    await runAutoSave()
+  }, [runAutoSave])
+
+  const reconnectAutoBackupFolder = useCallback(async () => {
+    const folder = folderRef.current
+    if (!folder) throw new Error('Choose a backup folder first.')
+    const permission = await folderPermission(folder, true)
+    setAutoBackup((current) => ({ ...current, permission }))
+    if (permission !== 'granted') {
+      throw new Error('Folder access was not granted.')
+    }
+    await runAutoSave()
+  }, [runAutoSave])
+
+  const disconnectAutoBackupFolder = useCallback(async () => {
+    if (autoSaveTimer.current !== null) {
+      window.clearTimeout(autoSaveTimer.current)
+      autoSaveTimer.current = null
+    }
+    dirtyRef.current = false
+    folderRef.current = null
+    await clearBackupFolder()
+    setAutoBackup((current) => ({
+      ...current,
+      connected: false,
+      folderName: null,
+      permission: 'prompt',
+      lastSavedAt: null,
+      saving: false,
+      error: null,
+    }))
   }, [])
+
+  const saveAutoBackupNow = useCallback(async () => {
+    if (!folderRef.current) throw new Error('Choose a backup folder first.')
+    return runAutoSave()
+  }, [runAutoSave])
 
   const importData = useCallback(
     async (raw: string) => {
@@ -465,6 +662,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
       resetAll,
       exportData,
       importData,
+      autoBackup,
+      chooseAutoBackupFolder,
+      reconnectAutoBackupFolder,
+      disconnectAutoBackupFolder,
+      saveAutoBackupNow,
       unlocked,
       unlock,
       lockNow,
@@ -490,6 +692,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
       resetAll,
       exportData,
       importData,
+      autoBackup,
+      chooseAutoBackupFolder,
+      reconnectAutoBackupFolder,
+      disconnectAutoBackupFolder,
+      saveAutoBackupNow,
       unlocked,
       unlock,
       lockNow,

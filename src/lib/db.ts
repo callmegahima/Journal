@@ -10,9 +10,10 @@ import type {
   WeeklyReflection,
 } from '@/types'
 import { buildDefaultSettings, hydrateSettings } from '@/lib/defaults'
+import type { AutoBackupFolder } from '@/lib/autosave'
 
 const DB_NAME = 'pa-trading-journal'
-const DB_VERSION = 1
+const DB_VERSION = 2
 
 interface JournalDB extends DBSchema {
   meta: {
@@ -47,6 +48,10 @@ interface JournalDB extends DBSchema {
     key: string
     value: WeeklyReflection
   }
+  backup: {
+    key: string
+    value: AutoBackupFolder
+  }
 }
 
 type CollectionName = 'plans' | 'trades' | 'checklists' | 'psych' | 'events' | 'reflections'
@@ -77,6 +82,9 @@ function getDb(): Promise<IDBPDatabase<JournalDB>> {
         }
         if (!db.objectStoreNames.contains('reflections')) {
           db.createObjectStore('reflections', { keyPath: 'id' })
+        }
+        if (!db.objectStoreNames.contains('backup')) {
+          db.createObjectStore('backup')
         }
       },
     })
@@ -167,6 +175,21 @@ export async function clearAllData(): Promise<void> {
     tx.objectStore('reflections').clear(),
   ])
   await tx.done
+}
+
+export async function loadBackupFolder(): Promise<AutoBackupFolder | null> {
+  const db = await getDb()
+  return (await db.get('backup', 'folder')) ?? null
+}
+
+export async function saveBackupFolder(folder: AutoBackupFolder): Promise<void> {
+  const db = await getDb()
+  await db.put('backup', folder, 'folder')
+}
+
+export async function clearBackupFolder(): Promise<void> {
+  const db = await getDb()
+  await db.delete('backup', 'folder')
 }
 
 export async function storageEstimate(): Promise<{

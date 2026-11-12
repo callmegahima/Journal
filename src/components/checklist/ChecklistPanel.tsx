@@ -51,11 +51,11 @@ function ScoreRing({ value }: { value: number }) {
   const radius = 26
   const circumference = 2 * Math.PI * radius
   const offset = circumference - (Math.min(100, Math.max(0, value)) / 100) * circumference
-  const color = value >= 90 ? '#22c55e' : value >= 60 ? '#3b82f6' : value >= 35 ? '#f59e0b' : '#ef4444'
+  const color = value >= 90 ? 'var(--color-profit)' : value >= 60 ? 'var(--color-accent)' : value >= 35 ? 'var(--color-warn)' : 'var(--color-loss)'
   return (
     <div className="relative h-[68px] w-[68px] shrink-0">
       <svg viewBox="0 0 64 64" className="-rotate-90">
-        <circle cx="32" cy="32" r={radius} fill="none" stroke="#1e293b" strokeWidth="5" />
+        <circle cx="32" cy="32" r={radius} fill="none" stroke="var(--color-line)" strokeWidth="5" />
         <circle
           cx="32"
           cy="32"
@@ -182,7 +182,7 @@ export function ChecklistPanel({
               <span className={cn('text-[15px] font-bold tracking-tight', styles.text)}>
                 {styles.title}
               </span>
-              <span className="rounded bg-black/20 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-muted">
+              <span className="rounded bg-ink/40 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-muted">
                 {direction}
               </span>
             </div>
@@ -197,7 +197,7 @@ export function ChecklistPanel({
             </div>
             <ul className="space-y-1">
               {blockers.map((blocker) => (
-                <li key={blocker} className="flex gap-1.5 text-[10px] leading-relaxed text-red-100/80">
+                <li key={blocker} className="flex gap-1.5 text-[10px] leading-relaxed text-loss">
                   <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-loss" />
                   {blocker}
                 </li>
@@ -213,13 +213,13 @@ export function ChecklistPanel({
             </div>
             <ul className="space-y-1">
               {missingMandatory.slice(0, 6).map((item) => (
-                <li key={item} className="flex gap-1.5 text-[10px] leading-relaxed text-amber-100/80">
+                <li key={item} className="flex gap-1.5 text-[10px] leading-relaxed text-warn">
                   <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-warn" />
                   {item}
                 </li>
               ))}
               {missingMandatory.length > 6 ? (
-                <li className="pl-2.5 text-[10px] text-amber-100/60">
+                <li className="pl-2.5 text-[10px] text-warn/75">
                   +{missingMandatory.length - 6} more
                 </li>
               ) : null}
@@ -228,7 +228,7 @@ export function ChecklistPanel({
         ) : null}
 
         {decision === 'READY' ? (
-          <div className="mt-2.5 flex gap-1.5 text-[10px] leading-relaxed text-emerald-100/70">
+          <div className="mt-2.5 flex gap-1.5 text-[10px] leading-relaxed text-profit/85">
             <Info size={11} className="mt-0.5 shrink-0" />
             Status is calculated from your rules. It never places or executes a trade.
           </div>

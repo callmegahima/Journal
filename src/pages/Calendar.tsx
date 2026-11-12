@@ -43,7 +43,7 @@ import {
   timezoneShort,
   weekRangeLabel,
 } from '@/lib/dates'
-import { computeMetrics } from '@/lib/metrics'
+import { balanceBefore, computeMetrics } from '@/lib/metrics'
 import { money, moneySigned, pct } from '@/lib/format'
 import { cn, uid } from '@/lib/utils'
 
@@ -310,8 +310,13 @@ export function CalendarPage() {
     [events, monthKey],
   )
   const monthMetrics = useMemo(
-    () => computeMetrics(monthTrades, settings.startingBalance, tz),
-    [monthTrades, settings.startingBalance, tz],
+    () =>
+      computeMetrics(
+        monthTrades,
+        balanceBefore(trades, `${monthKey}-01`, settings.startingBalance, tz),
+        tz,
+      ),
+    [monthTrades, trades, monthKey, settings.startingBalance, tz],
   )
 
   const dayTrades = tradesByDay.get(selectedDay) ?? []

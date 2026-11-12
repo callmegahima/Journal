@@ -217,10 +217,10 @@ export function InfoNote({
 }) {
   const tones = {
     slate: 'border-line-2/70 bg-panel-2/60 text-muted',
-    amber: 'border-warn/20 bg-warn/[0.06] text-amber-200/90',
-    blue: 'border-accent/20 bg-accent/[0.06] text-blue-100/80',
-    red: 'border-loss/20 bg-loss/[0.06] text-red-200/85',
-    green: 'border-profit/20 bg-profit/[0.06] text-emerald-100/85',
+    amber: 'border-warn/20 bg-warn/[0.06] text-warn',
+    blue: 'border-accent/20 bg-accent/[0.06] text-accent-2',
+    red: 'border-loss/20 bg-loss/[0.06] text-loss',
+    green: 'border-profit/20 bg-profit/[0.06] text-profit',
   }
   return (
     <div

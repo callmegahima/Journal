@@ -284,6 +284,7 @@ export function buildDefaultSettings(): Settings {
     weeklyLossLimitPct: 6,
     maxRiskPct: 2,
     minRR: 2,
+    leverage: 100,
     instruments: [XAUUSD_SPEC],
     activeInstrumentId: XAUUSD_SPEC.id,
     setups,
@@ -329,9 +330,15 @@ export function hydrateSettings(raw: Partial<Settings> | undefined): Settings {
     ...defaults,
     ...raw,
     version: SETTINGS_VERSION,
+    leverage:
+      typeof raw.leverage === 'number' && raw.leverage > 0 ? raw.leverage : defaults.leverage,
     instruments:
       Array.isArray(raw.instruments) && raw.instruments.length > 0
-        ? raw.instruments
+        ? raw.instruments.map((inst) =>
+            inst.contractSize > 0 && inst.tickSize > 0
+              ? { ...inst, tickValue: Math.round(inst.contractSize * inst.tickSize * 1e8) / 1e8 }
+              : inst,
+          )
         : defaults.instruments,
     checklistItems: mergedItems,
     setups: mergedSetups,

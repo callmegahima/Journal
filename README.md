@@ -37,6 +37,9 @@ npm run preview
 
 - Everything is stored in **IndexedDB in this browser**. There is no account, server or cloud sync.
 - Export a JSON backup from **Settings → Backup & data** before clearing browser data or changing devices.
+- On Chrome or Edge (desktop), you can optionally connect a folder in **Settings → Backup & data**.
+  The journal then keeps `pa-journal-autosave.json` up to date in that folder after every change.
+  Other browsers cannot write to a folder, so use manual exports there.
 - The optional passcode is hashed locally with PBKDF2-SHA256. There is **no recovery** if you forget
   it — a backup restored on an unlocked device is the only fallback.
 - Screenshots are stored locally with the trade.

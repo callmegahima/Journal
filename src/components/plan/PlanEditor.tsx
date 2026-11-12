@@ -36,7 +36,7 @@ import { ImageUpload, ImageLightbox } from '@/components/ui/ImageUpload'
 import { ChecklistPanel } from '@/components/checklist/ChecklistPanel'
 import { calculatePosition, decimalsForStep } from '@/lib/calc'
 import type { PositionResult } from '@/lib/calc'
-import { computeRiskStatus } from '@/lib/metrics'
+import { computeRiskStatus, sessionForInstant } from '@/lib/metrics'
 import {
   createRiskSnapshot,
   evaluateDecision,
@@ -52,7 +52,6 @@ import {
   timezoneLabel,
   timezoneShort,
 } from '@/lib/dates'
-import { formatInTimeZone } from 'date-fns-tz'
 import { cn, uid } from '@/lib/utils'
 import { lots as formatLots, money, pct, price } from '@/lib/format'
 
@@ -83,11 +82,8 @@ interface DraftState {
   checklistFinalized: boolean
 }
 
-function suggestedSession(tz: string): Session {
-  const hour = Number(formatInTimeZone(new Date(), tz, 'H'))
-  if (hour >= 8 && hour < 13) return 'London'
-  if (hour >= 13 && hour < 22) return 'New York'
-  return 'Asian'
+function suggestedSession(_tz: string): Session {
+  return sessionForInstant(new Date().toISOString())
 }
 
 function makeInitialDraft(
