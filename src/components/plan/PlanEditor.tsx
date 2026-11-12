@@ -34,7 +34,7 @@ import { Button, Badge, InfoNote, ProgressBar } from '@/components/ui/primitives
 import { NumberField } from '@/components/ui/form'
 import { ImageUpload, ImageLightbox } from '@/components/ui/ImageUpload'
 import { ChecklistPanel } from '@/components/checklist/ChecklistPanel'
-import { calculatePosition, decimalsForStep, quoteCurrencyOf } from '@/lib/calc'
+import { calculatePosition, decimalsForStep, quoteCurrencyOf, conversionPair } from '@/lib/calc'
 import type { PositionResult } from '@/lib/calc'
 import { computeRiskStatus, sessionForInstant } from '@/lib/metrics'
 import {
@@ -72,6 +72,10 @@ interface DraftState {
   sl: number | null
   tp: number | null
   riskPct: number
+  /** Manual lot size; null = calculated from risk %. */
+  lotsOverride: number | null
+  /** Crosses only: USD pair rate; null = the rate saved in Settings. */
+  conversionRate: number | null
   reasoning: string
   screenshot?: string
   templateId: string
@@ -125,6 +129,8 @@ function makeInitialDraft(
     sl: plan?.sl ?? null,
     tp: plan?.tp ?? null,
     riskPct: plan?.riskPct ?? settings.defaultRiskPct,
+    lotsOverride: plan?.lotsOverride ?? null,
+    conversionRate: plan?.conversionRate ?? null,
     reasoning: plan?.reasoning ?? '',
     screenshot: plan?.screenshot,
     templateId: template?.id ?? '',
@@ -206,6 +212,11 @@ export function PlanEditor({
     [data.trades, settings, tz],
   )
 
+  const crossPair = instrument ? conversionPair(instrument) : null
+  const conversionRate = crossPair
+    ? (draft.conversionRate ?? instrument?.conversionRate ?? null)
+    : null
+
   const position: PositionResult = useMemo(() => {
     if (!instrument) {
       return {
@@ -240,8 +251,10 @@ export function PlanEditor({
       spec: instrument,
       minRR: settings.minRR,
       maxRiskPct: settings.maxRiskPct,
+      lotsOverride: draft.lotsOverride,
+      conversionRate,
     })
-  }, [draft.direction, draft.entry, draft.sl, draft.tp, draft.riskPct, balance, instrument, settings.minRR, settings.maxRiskPct])
+  }, [draft.direction, draft.entry, draft.sl, draft.tp, draft.riskPct, draft.lotsOverride, conversionRate, balance, instrument, settings.minRR, settings.maxRiskPct])
 
   const { scores, overallPct } = useMemo(
     () => scoreChecklist(draft.items),
@@ -297,6 +310,8 @@ export function PlanEditor({
     riskPct: draft.riskPct,
     riskAmount: position.riskActual,
     lots: position.lots,
+    lotsOverride: draft.lotsOverride != null && draft.lotsOverride > 0 ? draft.lotsOverride : undefined,
+    conversionRate: crossPair && conversionRate != null ? conversionRate : undefined,
     rr: position.rr ?? 0,
     reasoning: draft.reasoning,
     checklistId: draft.checklistRunId,
@@ -682,7 +697,7 @@ export function PlanEditor({
               <Badge variant="slate">Balance {money(balance)}</Badge>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <NumberField
                 label="Entry price"
                 value={draft.entry}
@@ -714,6 +729,39 @@ export function PlanEditor({
                     : null
                 }
               />
+              <NumberField
+                label="Lot size"
+                value={draft.lotsOverride}
+                onChange={(value) => patch({ lotsOverride: value != null && value > 0 ? value : null })}
+                placeholder={position.lots > 0 ? `${formatLots(position.lots)} (auto)` : 'Auto'}
+                suffix="lots"
+                min={0}
+                step={instrument?.lotStep ?? 0.01}
+                hint={
+                  draft.lotsOverride != null ? (
+                    <button
+                      type="button"
+                      className="font-medium text-accent-2 underline-offset-2 hover:underline"
+                      onClick={() => patch({ lotsOverride: null })}
+                    >
+                      Use auto size from risk %
+                    </button>
+                  ) : (
+                    'Auto from risk %. Type to set your own.'
+                  )
+                }
+              />
+              {crossPair ? (
+                <NumberField
+                  label={`${crossPair.symbol} rate`}
+                  value={conversionRate}
+                  onChange={(value) => patch({ conversionRate: value != null && value > 0 ? value : null })}
+                  placeholder="Current price"
+                  min={0}
+                  step={0.00001}
+                  hint={`Converts ${instrument ? quoteCurrencyOf(instrument) : ''} to USD for risk and lot size, like MT5.`}
+                />
+              ) : null}
             </div>
 
             <div className="mt-4">
@@ -773,9 +821,11 @@ export function PlanEditor({
                 label="Position size"
                 value={position.lots > 0 ? `${formatLots(position.lots)} lots` : '—'}
                 hint={
-                  position.rawLots > 0 && position.lots === 0
-                    ? 'Below broker minimum'
-                    : `${instrument?.symbol ?? ''} · ${formatLots(position.rawLots)} raw`
+                  draft.lotsOverride != null && position.lots > 0
+                    ? `${instrument?.symbol ?? ''} · manual`
+                    : position.rawLots > 0 && position.lots === 0
+                      ? 'Below broker minimum'
+                      : `${instrument?.symbol ?? ''} · ${formatLots(position.rawLots)} raw`
                 }
               />
               <CalcStat

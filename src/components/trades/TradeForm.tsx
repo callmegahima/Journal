@@ -122,7 +122,7 @@ function makeDraft(
     lots: plan?.lots && plan.lots > 0 ? plan.lots : null,
     commission: null,
     swap: null,
-    conversionRate: null,
+    conversionRate: plan?.conversionRate ?? null,
     riskAmount: plan?.riskAmount && plan.riskAmount > 0 ? plan.riskAmount : null,
     pnl: null,
     setup: plan?.setup ?? activeSetups[0]?.name ?? settings.setups[0]?.name ?? '',

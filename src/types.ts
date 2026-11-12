@@ -159,6 +159,10 @@ export interface Plan {
   riskPct: number
   riskAmount: number
   lots: number
+  /** Lot size typed by the trader; missing = calculated from risk %. */
+  lotsOverride?: number
+  /** For crosses (EURJPY…): USD pair rate used for sizing, e.g. USDJPY. */
+  conversionRate?: number
   rr: number
   reasoning: string
   checklistId?: string
