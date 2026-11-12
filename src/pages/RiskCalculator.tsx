@@ -36,8 +36,7 @@ import {
   pointsFromPrice,
   tickValueFor,
   valuePerPriceUnit,
-  type PositionResult,
-} from '@/lib/calc'
+  type PositionResult, conversionPair, quoteCurrencyOf } from '@/lib/calc'
 import { computeRiskStatus } from '@/lib/metrics'
 import {
   lots as formatLots,
@@ -121,6 +120,9 @@ export function RiskCalculatorPage() {
   const [exitPrice, setExitPrice] = useState<number | null>(null)
   const [manualLots, setManualLots] = useState<number | null>(null)
   const [lotsForExit, setLotsForExit] = useState<number | null>(null)
+  const crossPair = spec ? conversionPair(spec) : null
+  const [rateInput, setRateInput] = useState<number | null>(null)
+  const conversionRate = crossPair ? (rateInput ?? spec?.conversionRate ?? null) : null
 
   const riskStatus = useMemo(
     () => computeRiskStatus(trades, settings, tz),
@@ -140,8 +142,10 @@ export function RiskCalculatorPage() {
       minRR: settings.minRR,
       maxRiskPct: settings.maxRiskPct,
       lotsOverride: manualLots,
+      conversionRate,
     })
   }, [
+    conversionRate,
     spec,
     direction,
     entry,
@@ -162,12 +166,14 @@ export function RiskCalculatorPage() {
   const exitResult = useMemo(
     () =>
       spec && entry != null && exitPrice != null && exitLots > 0
-        ? calculatePnl({ direction, entry, exit: exitPrice, lots: exitLots, spec })
+        ? calculatePnl({ direction, entry, exit: exitPrice, lots: exitLots, spec, conversionRate })
         : null,
-    [spec, entry, exitPrice, exitLots, direction],
+    [spec, entry, exitPrice, exitLots, direction, conversionRate],
   )
   const exitRisk = position && position.slDistance > 0 && spec ? position.slDistance * position.valuePerUnit * exitLots : 0
-  const margin = spec ? calculateMargin(exitLots || position?.lots || 0, entry, spec, settings.leverage) : 0
+  const margin = spec
+    ? calculateMargin(exitLots || position?.lots || 0, entry, spec, settings.leverage, conversionRate)
+    : 0
   const blockers = useMemo(() => {
     const list: string[] = []
     if (!position) {
@@ -553,6 +559,7 @@ export function RiskCalculatorPage() {
               <div className="grid gap-3 sm:grid-cols-3">
                 <NumberField
                   label="Entry price"
+                  suffix={spec ? quoteCurrencyOf(spec) : 'USD'}
                   value={entry}
                   onChange={setEntry}
                   min={0}
@@ -561,6 +568,7 @@ export function RiskCalculatorPage() {
                 />
                 <NumberField
                   label="Stop loss"
+                  suffix={spec ? quoteCurrencyOf(spec) : 'USD'}
                   value={sl}
                   onChange={setSl}
                   min={0}
@@ -573,6 +581,7 @@ export function RiskCalculatorPage() {
                 />
                 <NumberField
                   label="Take profit"
+                  suffix={spec ? quoteCurrencyOf(spec) : 'USD'}
                   value={tp}
                   onChange={setTp}
                   min={0}
@@ -581,16 +590,31 @@ export function RiskCalculatorPage() {
                 />
               </div>
 
+              {crossPair ? (
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <NumberField
+                    label={`${crossPair.symbol} rate`}
+                    value={conversionRate}
+                    onChange={setRateInput}
+                    min={0}
+                    step={0.00001}
+                    error={conversionRate == null ? `Needed to convert ${spec ? quoteCurrencyOf(spec) : ''} to USD.` : null}
+                    hint={`Converts ${spec ? quoteCurrencyOf(spec) : ''} profit to USD, like MT5.`}
+                  />
+                </div>
+              ) : null}
+
               <div className="rounded-xl border border-accent/25 bg-accent/[0.04] p-3">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <span className="text-[11px] font-semibold text-fg">Exit price → MT5 profit</span>
                   <span className="text-[9px] text-dim">
-                    ({direction === 'BUY' ? 'exit − entry' : 'entry − exit'}) × {spec?.contractSize ?? 100} × lots
+                    ({direction === 'BUY' ? 'exit − entry' : 'entry − exit'}) × {spec?.contractSize ?? 100} × lots{spec && quoteCurrencyOf(spec) !== 'USD' ? ` → USD` : ''}
                   </span>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <NumberField
                     label="Exit price"
+                  suffix={spec ? quoteCurrencyOf(spec) : 'USD'}
                     value={exitPrice}
                     onChange={setExitPrice}
                     min={0}
@@ -836,6 +860,7 @@ export function RiskCalculatorPage() {
                           spec,
                           minRR: settings.minRR,
                           maxRiskPct: settings.maxRiskPct,
+                          conversionRate,
                         })
                       : null
                     const overMax = value > settings.maxRiskPct

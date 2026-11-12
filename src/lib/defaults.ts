@@ -271,6 +271,71 @@ export const XAUUSD_SPEC: InstrumentSpec = {
   maxLot: 100,
 }
 
+export interface InstrumentPreset {
+  group: 'Metals' | 'Forex majors' | 'Forex crosses' | 'Crypto' | 'Indices'
+  spec: Omit<InstrumentSpec, 'id' | 'tickValue'>
+  /** Contract sizes for these differ between brokers — check MT5 → Specification. */
+  checkBroker?: boolean
+}
+
+const fx = (
+  symbol: string,
+  name: string,
+  tickSize = 0.00001,
+): Omit<InstrumentSpec, 'id' | 'tickValue'> => ({
+  symbol,
+  name,
+  contractSize: 100000,
+  tickSize,
+  minLot: 0.01,
+  lotStep: 0.01,
+  maxLot: 100,
+  baseCurrency: symbol.slice(0, 3),
+  quoteCurrency: symbol.slice(3, 6),
+})
+
+const cfd = (
+  symbol: string,
+  name: string,
+  contractSize: number,
+  tickSize: number,
+): Omit<InstrumentSpec, 'id' | 'tickValue'> => ({
+  symbol,
+  name,
+  contractSize,
+  tickSize,
+  minLot: 0.01,
+  lotStep: 0.01,
+  maxLot: 100,
+  quoteCurrency: 'USD',
+})
+
+/** Typical MT5 specifications. Always confirm against your broker's symbol specification. */
+export const INSTRUMENT_PRESETS: InstrumentPreset[] = [
+  { group: 'Metals', spec: cfd('XAUUSD', 'Gold vs US Dollar', 100, 0.01) },
+  { group: 'Metals', spec: cfd('XAGUSD', 'Silver vs US Dollar', 5000, 0.001) },
+  { group: 'Forex majors', spec: fx('EURUSD', 'Euro vs US Dollar') },
+  { group: 'Forex majors', spec: fx('GBPUSD', 'Pound vs US Dollar') },
+  { group: 'Forex majors', spec: fx('AUDUSD', 'Australian Dollar vs US Dollar') },
+  { group: 'Forex majors', spec: fx('NZDUSD', 'New Zealand Dollar vs US Dollar') },
+  { group: 'Forex majors', spec: fx('USDJPY', 'US Dollar vs Japanese Yen', 0.001) },
+  { group: 'Forex majors', spec: fx('USDCHF', 'US Dollar vs Swiss Franc') },
+  { group: 'Forex majors', spec: fx('USDCAD', 'US Dollar vs Canadian Dollar') },
+  { group: 'Forex crosses', spec: fx('EURJPY', 'Euro vs Japanese Yen', 0.001) },
+  { group: 'Forex crosses', spec: fx('GBPJPY', 'Pound vs Japanese Yen', 0.001) },
+  { group: 'Forex crosses', spec: fx('AUDJPY', 'Australian Dollar vs Japanese Yen', 0.001) },
+  { group: 'Forex crosses', spec: fx('EURGBP', 'Euro vs Pound') },
+  { group: 'Forex crosses', spec: fx('EURCHF', 'Euro vs Swiss Franc') },
+  { group: 'Forex crosses', spec: fx('GBPCHF', 'Pound vs Swiss Franc') },
+  { group: 'Forex crosses', spec: fx('EURAUD', 'Euro vs Australian Dollar') },
+  { group: 'Forex crosses', spec: fx('GBPAUD', 'Pound vs Australian Dollar') },
+  { group: 'Crypto', spec: cfd('BTCUSD', 'Bitcoin vs US Dollar', 1, 0.01), checkBroker: true },
+  { group: 'Crypto', spec: cfd('ETHUSD', 'Ethereum vs US Dollar', 1, 0.01), checkBroker: true },
+  { group: 'Indices', spec: cfd('US30', 'Dow Jones 30 (USD)', 1, 0.01), checkBroker: true },
+  { group: 'Indices', spec: cfd('NAS100', 'Nasdaq 100 (USD)', 1, 0.01), checkBroker: true },
+  { group: 'Indices', spec: cfd('US500', 'S&P 500 (USD)', 1, 0.01), checkBroker: true },
+]
+
 export function buildDefaultSettings(): Settings {
   const setups = buildDefaultSetups()
   return {

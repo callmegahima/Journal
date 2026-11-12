@@ -59,8 +59,8 @@ import {
   calculateTradeRisk,
   roundTo,
   tickValueFor,
-  valuePerPriceUnit,
-} from '@/lib/calc'
+  valuePerPriceUnit, conversionKind, conversionPair, quoteCurrencyOf } from '@/lib/calc'
+import { INSTRUMENT_PRESETS } from '@/lib/defaults'
 
 type SettingsTab = 'account' | 'risk' | 'instruments' | 'security' | 'data'
 
@@ -236,6 +236,26 @@ export function SettingsPage() {
     setActiveInstrumentId((current) => current || next.id)
   }
 
+  const addPreset = (symbol: string) => {
+    const preset = INSTRUMENT_PRESETS.find((item) => item.spec.symbol === symbol)
+    if (!preset) return
+    if (instruments.some((item) => item.symbol.trim().toUpperCase() === symbol)) {
+      toast(`${symbol} is already in your list.`, 'info')
+      return
+    }
+    const next: InstrumentSpec = { ...preset.spec, id: uid('inst'), tickValue: 0 }
+    next.tickValue = tickValueFor(next)
+    setInstruments((current) => [...current, next])
+    toast(
+      conversionKind(next) === 'cross'
+        ? `${symbol} added. Enter the current ${conversionPair(next)?.symbol} rate, then save.`
+        : preset.checkBroker
+          ? `${symbol} added. Contract sizes vary by broker — check MT5 → Specification, then save.`
+          : `${symbol} added. Save instrument settings to keep it.`,
+      'success',
+    )
+  }
+
   const [recalcOpen, setRecalcOpen] = useState(false)
 
   const recalculateTrades = async () => {
@@ -250,6 +270,7 @@ export function SettingsPage() {
         exit: trade.exit,
         lots: trade.lots,
         spec,
+        conversionRate: trade.conversionRate,
         commission: trade.commission,
         swap: trade.swap,
       })
@@ -259,11 +280,12 @@ export function SettingsPage() {
         exit: trade.exit,
         lots: trade.lots,
         spec,
+        conversionRate: trade.conversionRate,
       }).gross
       // Keep a manually entered risk for trades without a stop loss.
       const riskAmount =
         trade.sl != null && trade.sl > 0
-          ? calculateTradeRisk(trade.entry, trade.sl, trade.lots, spec)
+          ? calculateTradeRisk(trade.entry, trade.sl, trade.lots, spec, trade.conversionRate)
           : trade.riskAmount
       const rMultiple = riskAmount > 0 ? roundTo(pnl / riskAmount, 2) : 0
       if (pnl === trade.pnl && riskAmount === trade.riskAmount) continue
@@ -302,6 +324,16 @@ export function SettingsPage() {
       }
       if (instrument.maxLot < instrument.minLot) {
         toast(`Maximum lot for ${instrument.symbol} cannot be below the minimum lot.`, 'error')
+        return
+      }
+      if (conversionKind(instrument) === 'cross' && !(instrument.conversionRate! > 0)) {
+        const pair = conversionPair(instrument)
+        toast(
+          pair
+            ? `Enter the current ${pair.symbol} rate for ${instrument.symbol} so its profit can be converted to USD.`
+            : `${instrument.symbol}: quote currency ${quoteCurrencyOf(instrument)} is not supported yet.`,
+          'error',
+        )
         return
       }
     }
@@ -814,18 +846,43 @@ export function SettingsPage() {
       {tab === 'instruments' ? (
         <div className="space-y-4">
           <InfoNote tone="amber" icon={<AlertTriangle size={12} />}>
-            The XAUUSD values are templates only. Confirm contract size, tick size, tick value,
-            minimum lot, lot step and maximum lot with your broker. A wrong tick value directly
-            changes every position size the calculator produces.
+            Preset values are typical MT5 specifications. Confirm contract size, tick size and lot
+            limits in MT5 (right-click the symbol → Specification) — a wrong contract size changes
+            every P/L and position size. Profit is converted to USD the way MT5 does it.
           </InfoNote>
 
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-[11px] text-muted">
               {instruments.length} instrument{instruments.length === 1 ? '' : 's'} configured
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                className="input h-9 w-auto"
+                value=""
+                onChange={(event) => addPreset(event.target.value)}
+                aria-label="Add a market from the list"
+              >
+                <option value="">+ Add a market…</option>
+                {(['Metals', 'Forex majors', 'Forex crosses', 'Crypto', 'Indices'] as const).map(
+                  (group) => (
+                    <optgroup key={group} label={group}>
+                      {INSTRUMENT_PRESETS.filter((item) => item.group === group).map((item) => (
+                        <option
+                          key={item.spec.symbol}
+                          value={item.spec.symbol}
+                          disabled={instruments.some(
+                            (inst) => inst.symbol.trim().toUpperCase() === item.spec.symbol,
+                          )}
+                        >
+                          {item.spec.symbol} — {item.spec.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ),
+                )}
+              </select>
               <Button variant="soft" onClick={addInstrument}>
-                <Plus size={14} /> Add instrument
+                <Plus size={14} /> Custom
               </Button>
               <Button variant="primary" onClick={saveInstruments}>
                 Save instrument settings
@@ -942,9 +999,63 @@ export function SettingsPage() {
                     disabled
                     min={0}
                     step={0.01}
-                    prefix="$"
+                    prefix={quoteCurrencyOf(instrument) === 'USD' ? '$' : quoteCurrencyOf(instrument)}
                     hint="Auto: contract size × tick size"
                   />
+                  <div>
+                    <label className="label" htmlFor={`quote-${instrument.id}`}>
+                      Profit currency
+                    </label>
+                    <select
+                      id={`quote-${instrument.id}`}
+                      className="input"
+                      value={quoteCurrencyOf(instrument)}
+                      onChange={(event) =>
+                        updateInstrument(instrument.id, { quoteCurrency: event.target.value })
+                      }
+                    >
+                      {['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'NZD'].map((ccy) => (
+                        <option key={ccy} value={ccy}>
+                          {ccy}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-[10px] text-dim">
+                      Second currency of the symbol (JPY in USDJPY). USD for gold, crypto, US indices.
+                    </p>
+                  </div>
+                  {quoteCurrencyOf(instrument) !== 'USD' ? (
+                    <div>
+                      <label className="label" htmlFor={`base-${instrument.id}`}>
+                        Base currency
+                      </label>
+                      <input
+                        id={`base-${instrument.id}`}
+                        className="input font-mono"
+                        value={instrument.baseCurrency ?? ''}
+                        maxLength={3}
+                        placeholder="e.g. USD"
+                        onChange={(event) =>
+                          updateInstrument(instrument.id, {
+                            baseCurrency: event.target.value.toUpperCase(),
+                          })
+                        }
+                      />
+                      <p className="mt-1 text-[10px] text-dim">First currency (USD in USDJPY).</p>
+                    </div>
+                  ) : null}
+                  {conversionKind(instrument) === 'cross' ? (
+                    <NumberField
+                      label={`${conversionPair(instrument)?.symbol ?? 'Conversion'} rate`}
+                      value={instrument.conversionRate ?? null}
+                      onChange={(value) =>
+                        updateInstrument(instrument.id, { conversionRate: value ?? undefined })
+                      }
+                      min={0}
+                      step={0.00001}
+                      hint="Current price — used to convert profit to USD. Each trade can store its own."
+                    />
+                  ) : null}
                   <NumberField
                     label="Minimum lot"
                     value={instrument.minLot}
@@ -974,9 +1085,27 @@ export function SettingsPage() {
                   />
                 </div>
                 <div className="border-t border-line px-4 py-2.5 text-[10px] text-dim">
-                  Value per 1.00 price move: {money(valuePerPriceUnit(instrument))} per
-                  lot ({money(valuePerPriceUnit(instrument) * 0.01)} at 0.01 lot) · {instrument.tickSize > 0 ? num(1 / instrument.tickSize, 0) : '—'} ticks per
-                  price unit
+                  {conversionKind(instrument) === 'usd' ? (
+                    <>
+                      Value per 1.00 price move: {money(valuePerPriceUnit(instrument))} per lot (
+                      {money(valuePerPriceUnit(instrument) * 0.01)} at 0.01 lot)
+                    </>
+                  ) : conversionKind(instrument) === 'inverse' ? (
+                    <>
+                      Value per 1.00 price move: {num(instrument.contractSize, 0)}{' '}
+                      {quoteCurrencyOf(instrument)} per lot, converted to USD at the closing price
+                      (÷ {instrument.symbol}), like MT5.
+                    </>
+                  ) : (
+                    <>
+                      Value per 1.00 price move: {num(instrument.contractSize, 0)}{' '}
+                      {quoteCurrencyOf(instrument)} per lot
+                      {valuePerPriceUnit(instrument) > 0
+                        ? ` ≈ ${money(valuePerPriceUnit(instrument))} at the saved ${conversionPair(instrument)?.symbol} rate`
+                        : ` — enter the ${conversionPair(instrument)?.symbol ?? 'conversion'} rate`}
+                    </>
+                  )}{' '}
+                  · {instrument.tickSize > 0 ? num(1 / instrument.tickSize, 0) : '—'} ticks per price unit
                 </div>
               </Card>
             )

@@ -1,19 +1,87 @@
 import type { Direction, InstrumentSpec, TradeResult } from '@/types'
 
+/* ------------------------------------------------------------------ currency conversion
+ * MT5 works out profit in the symbol's quote currency, then converts it to the account
+ * currency (USD here):
+ *   - quote = USD (XAUUSD, EURUSD, BTCUSD…): no conversion
+ *   - base = USD (USDJPY, USDCHF, USDCAD): divide by the pair's own price
+ *   - crosses (EURJPY, EURGBP…): convert through the USD pair of the quote currency,
+ *     e.g. JPY profit ÷ USDJPY, GBP profit × GBPUSD
+ */
+
+/** The USD pair MT5 uses for each quote currency, and whether USD is its second currency. */
+export const USD_PAIRS: Record<string, { symbol: string; usdIsQuote: boolean }> = {
+  EUR: { symbol: 'EURUSD', usdIsQuote: true },
+  GBP: { symbol: 'GBPUSD', usdIsQuote: true },
+  AUD: { symbol: 'AUDUSD', usdIsQuote: true },
+  NZD: { symbol: 'NZDUSD', usdIsQuote: true },
+  JPY: { symbol: 'USDJPY', usdIsQuote: false },
+  CHF: { symbol: 'USDCHF', usdIsQuote: false },
+  CAD: { symbol: 'USDCAD', usdIsQuote: false },
+}
+
+export function quoteCurrencyOf(spec: Pick<InstrumentSpec, 'quoteCurrency'>): string {
+  return (spec.quoteCurrency || 'USD').toUpperCase()
+}
+
+export type ConversionKind = 'usd' | 'inverse' | 'cross'
+
+/** How a symbol's profit becomes USD. */
+export function conversionKind(spec: Pick<InstrumentSpec, 'quoteCurrency' | 'baseCurrency'>): ConversionKind {
+  if (quoteCurrencyOf(spec) === 'USD') return 'usd'
+  if ((spec.baseCurrency || '').toUpperCase() === 'USD') return 'inverse'
+  return 'cross'
+}
+
+/** For crosses: the USD pair whose rate the user enters (e.g. USDJPY). */
+export function conversionPair(spec: Pick<InstrumentSpec, 'quoteCurrency' | 'baseCurrency'>) {
+  if (conversionKind(spec) !== 'cross') return null
+  return USD_PAIRS[quoteCurrencyOf(spec)] ?? null
+}
+
+/**
+ * USD value of 1 unit of the quote currency.
+ * @param price the symbol price at the moment being valued (exit for profit, SL for risk)
+ * @param rate  for crosses, the USD pair rate (falls back to the instrument's saved rate)
+ */
+export function quoteToUsd(
+  spec: InstrumentSpec,
+  price?: number | null,
+  rate?: number | null,
+): number {
+  const kind = conversionKind(spec)
+  if (kind === 'usd') return 1
+  if (kind === 'inverse') return price != null && price > 0 ? 1 / price : 0
+  const pair = USD_PAIRS[quoteCurrencyOf(spec)]
+  const r = rate != null && rate > 0 ? rate : spec.conversionRate
+  if (!pair || r == null || !(r > 0)) return 0
+  return pair.usdIsQuote ? r : 1 / r
+}
+
 /**
  * USD value of a 1.00 price move for 1.00 lot.
  *
  * For USD-quoted instruments such as XAUUSD this is simply the contract size:
  * 1 lot = 100 oz, so a $1 move = $100 per lot (0.01 lot = $1, 0.10 lot = $10).
- * Profit = price difference × contract size × lots.
+ * For other quote currencies it is contract size × (quote → USD) at `price` / `rate`.
  */
-export function valuePerPriceUnit(spec: InstrumentSpec): number {
-  if (Number.isFinite(spec.contractSize) && spec.contractSize > 0) return spec.contractSize
-  if (!Number.isFinite(spec.tickSize) || spec.tickSize <= 0) return 0
-  return spec.tickValue / spec.tickSize
+export function valuePerPriceUnit(
+  spec: InstrumentSpec,
+  price?: number | null,
+  rate?: number | null,
+): number {
+  let size = 0
+  if (Number.isFinite(spec.contractSize) && spec.contractSize > 0) size = spec.contractSize
+  else if (Number.isFinite(spec.tickSize) && spec.tickSize > 0) size = spec.tickValue / spec.tickSize
+  if (!(size > 0)) return 0
+  const kind = conversionKind(spec)
+  if (kind === 'usd') return size
+  // Base-USD pairs (USDJPY) need a price to convert; without one there is no value yet.
+  if (kind === 'inverse' && !(price != null && price > 0)) return 0
+  return size * quoteToUsd(spec, price, rate)
 }
 
-/** USD per tick per 1.00 lot, derived from contract size × tick size. */
+/** Value per tick per 1.00 lot in the quote currency (USD for USD-quoted symbols). */
 export function tickValueFor(spec: Pick<InstrumentSpec, 'contractSize' | 'tickSize'>): number {
   if (!(spec.contractSize > 0) || !(spec.tickSize > 0)) return 0
   return roundTo(spec.contractSize * spec.tickSize, 8)
@@ -70,6 +138,8 @@ export interface PositionInput {
   minRR: number
   maxRiskPct: number
   lotsOverride?: number | null
+  /** For crosses: USD pair rate (e.g. USDJPY). */
+  conversionRate?: number | null
 }
 
 export interface PositionResult {
@@ -102,7 +172,9 @@ export function calculatePosition(input: PositionInput): PositionResult {
   const riskTarget = Math.max(0, (balance * riskPct) / 100)
   const slDistance = priceDistance(entry, sl)
   const tpDistance = priceDistance(entry, tp)
-  const vpp = valuePerPriceUnit(spec)
+  // Loss is converted at the stop price and profit at the target price, as MT5 does at close.
+  const vpp = valuePerPriceUnit(spec, sl ?? entry, input.conversionRate)
+  const tpVpp = valuePerPriceUnit(spec, tp ?? entry, input.conversionRate)
   const incomplete = entry == null || sl == null
   const errors: string[] = []
   const warnings: string[] = []
@@ -134,8 +206,12 @@ export function calculatePosition(input: PositionInput): PositionResult {
     }
   }
 
-  if (vpp <= 0) {
-    errors.push('Instrument contract specification is invalid. Check tick size and tick value.')
+  if (vpp <= 0 && !incomplete) {
+    errors.push(
+      conversionKind(spec) === 'cross'
+        ? `Enter the current ${conversionPair(spec)?.symbol ?? 'conversion'} rate to convert ${quoteCurrencyOf(spec)} to USD.`
+        : 'Instrument contract specification is invalid. Check contract size and tick size.',
+    )
   }
 
   const usable = directionValid && vpp > 0 && slDistance > 0
@@ -181,7 +257,7 @@ export function calculatePosition(input: PositionInput): PositionResult {
   const riskActual = slDistance * vpp * lots
   const riskPctActual = balance > 0 ? (riskActual / balance) * 100 : 0
   const minLotRisk = slDistance * vpp * spec.minLot
-  const rewardActual = tp != null && tpValid ? tpDistance * vpp * lots : null
+  const rewardActual = tp != null && tpValid ? tpDistance * tpVpp * lots : null
   const rr = slDistance > 0 && tp != null && tpValid ? tpDistance / slDistance : null
 
   if (usable && !manual && rawLots < spec.minLot) {
@@ -257,6 +333,8 @@ export interface PnlInput {
   exit: number | null
   lots: number
   spec: InstrumentSpec
+  /** For crosses: USD pair rate at close (e.g. USDJPY when trading EURJPY). */
+  conversionRate?: number | null
   /** Legacy single cost field — always treated as a cost (subtracted). */
   fees?: number
   /** MT5 "Commission" column — signed, normally negative. */
@@ -299,7 +377,7 @@ export function calculatePnl(input: PnlInput): PnlResult {
     const pnl = roundTo(commission + swap - fees, 2)
     return { gross: 0, fees, commission, swap, pnl, result: resultFromPnl(pnl), priceMove: 0, points: 0 }
   }
-  const vpp = valuePerPriceUnit(spec)
+  const vpp = valuePerPriceUnit(spec, exit, input.conversionRate)
   const diff = direction === 'BUY' ? exit - entry : entry - exit
   const priceMove = roundTo(diff, decimalsForStep(spec.tickSize))
   const gross = roundTo(priceMove * vpp * (Number.isFinite(lots) ? lots : 0), 2)
@@ -309,17 +387,20 @@ export function calculatePnl(input: PnlInput): PnlResult {
 }
 
 /**
- * MT5 margin for CFD-leverage symbols such as XAUUSD:
- *   margin = lots × contract size × open price ÷ leverage
+ * MT5 margin in USD:
+ *   margin = lots × contract size × open price × (quote → USD) ÷ leverage
+ * XAUUSD/EURUSD: lots × contract × price ÷ leverage. USDJPY: lots × contract ÷ leverage.
  */
 export function calculateMargin(
   lots: number,
   openPrice: number | null,
   spec: InstrumentSpec,
   leverage: number,
+  conversionRate?: number | null,
 ): number {
   if (openPrice == null || !(openPrice > 0) || !(lots > 0) || !(leverage > 0)) return 0
-  return roundTo((lots * spec.contractSize * openPrice) / leverage, 2)
+  const toUsd = quoteToUsd(spec, openPrice, conversionRate)
+  return roundTo((lots * spec.contractSize * openPrice * toUsd) / leverage, 2)
 }
 
 export function calculateTradeRisk(
@@ -327,8 +408,9 @@ export function calculateTradeRisk(
   sl: number | null,
   lots: number,
   spec: InstrumentSpec,
+  conversionRate?: number | null,
 ): number {
-  return roundTo(priceDistance(entry, sl) * valuePerPriceUnit(spec) * lots, 2)
+  return roundTo(priceDistance(entry, sl) * valuePerPriceUnit(spec, sl, conversionRate) * lots, 2)
 }
 
 export function riskPctOf(riskAmount: number, balance: number): number {

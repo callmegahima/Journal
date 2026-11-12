@@ -34,7 +34,7 @@ import { Button, Badge, InfoNote, ProgressBar } from '@/components/ui/primitives
 import { NumberField } from '@/components/ui/form'
 import { ImageUpload, ImageLightbox } from '@/components/ui/ImageUpload'
 import { ChecklistPanel } from '@/components/checklist/ChecklistPanel'
-import { calculatePosition, decimalsForStep } from '@/lib/calc'
+import { calculatePosition, decimalsForStep, quoteCurrencyOf } from '@/lib/calc'
 import type { PositionResult } from '@/lib/calc'
 import { computeRiskStatus, sessionForInstant } from '@/lib/metrics'
 import {
@@ -688,14 +688,14 @@ export function PlanEditor({
                 value={draft.entry}
                 onChange={(value) => patch({ entry: value })}
                 placeholder="0.00"
-                suffix="USD"
+                suffix={instrument ? quoteCurrencyOf(instrument) : 'USD'}
               />
               <NumberField
                 label="Stop Loss"
                 value={draft.sl}
                 onChange={(value) => patch({ sl: value })}
                 placeholder="0.00"
-                suffix="USD"
+                suffix={instrument ? quoteCurrencyOf(instrument) : 'USD'}
                 error={
                   draft.entry != null && draft.sl != null && !position.directionValid
                     ? `SL must be ${draft.direction === 'BUY' ? 'below' : 'above'} entry`
@@ -707,7 +707,7 @@ export function PlanEditor({
                 value={draft.tp}
                 onChange={(value) => patch({ tp: value })}
                 placeholder="0.00"
-                suffix="USD"
+                suffix={instrument ? quoteCurrencyOf(instrument) : 'USD'}
                 error={
                   draft.tp != null && draft.entry != null && position.tpValid === false
                     ? `TP must be ${draft.direction === 'BUY' ? 'above' : 'below'} entry`

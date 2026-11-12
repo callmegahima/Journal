@@ -32,8 +32,7 @@ import {
   decimalsForStep,
   plannedRR,
   resultFromPnl,
-  valuePerPriceUnit,
-} from '@/lib/calc'
+  valuePerPriceUnit, conversionKind, conversionPair, quoteCurrencyOf } from '@/lib/calc'
 import { COMMON_MISTAKES } from '@/lib/defaults'
 import { isoToLocalInput, localInputToIso, nowIso, timezoneShort } from '@/lib/dates'
 import { formatDuration, sessionForInstant } from '@/lib/metrics'
@@ -52,6 +51,8 @@ interface TradeDraftState {
   lots: number | null
   commission: number | null
   swap: number | null
+  /** USD pair rate at close for crosses (EURJPY → USDJPY). */
+  conversionRate: number | null
   riskAmount: number | null
   pnl: number | null
   setup: string
@@ -90,6 +91,7 @@ function makeDraft(
       lots: trade.lots,
       commission: trade.commission ?? null,
       swap: trade.swap ?? null,
+      conversionRate: trade.conversionRate ?? null,
       riskAmount: trade.riskAmount,
       pnl: trade.pnl,
       setup: trade.setup,
@@ -120,6 +122,7 @@ function makeDraft(
     lots: plan?.lots && plan.lots > 0 ? plan.lots : null,
     commission: null,
     swap: null,
+    conversionRate: null,
     riskAmount: plan?.riskAmount && plan.riskAmount > 0 ? plan.riskAmount : null,
     pnl: null,
     setup: plan?.setup ?? activeSetups[0]?.name ?? settings.setups[0]?.name ?? '',
@@ -156,7 +159,12 @@ export function TradeForm({
     if (!trade) return false
     const spec = settings.instruments.find((item) => item.id === trade.instrumentId)
     if (!spec) return true
-    return Math.abs(calculateTradeRisk(trade.entry, trade.sl, trade.lots, spec) - trade.riskAmount) > 0.01
+    return (
+      Math.abs(
+        calculateTradeRisk(trade.entry, trade.sl, trade.lots, spec, trade.conversionRate) -
+          trade.riskAmount,
+      ) > 0.01
+    )
   })
   const [pnlTouched, setPnlTouched] = useState(() => {
     if (!trade) return false
@@ -168,6 +176,7 @@ export function TradeForm({
       exit: trade.exit,
       lots: trade.lots,
       spec,
+      conversionRate: trade.conversionRate,
       commission: trade.commission,
       swap: trade.swap,
     })
@@ -181,6 +190,10 @@ export function TradeForm({
     settings.instruments.find((item) => item.id === draft.instrumentId) ??
     settings.instruments[0]
   const decimals = instrument ? decimalsForStep(instrument.tickSize) : 2
+  const priceUnit = instrument ? quoteCurrencyOf(instrument) : 'USD'
+  const crossPair = instrument ? conversionPair(instrument) : null
+  // Crosses need the USD pair's rate; default to the rate saved on the instrument.
+  const conversionRate = crossPair ? (draft.conversionRate ?? instrument?.conversionRate ?? null) : null
 
   const linkedPlan = useMemo(
     () => (draft.planId ? data.plans.find((item) => item.id === draft.planId) : plan),
@@ -197,8 +210,11 @@ export function TradeForm({
   )
 
   const calculatedRisk = useMemo(
-    () => (instrument ? calculateTradeRisk(draft.entry, draft.sl, draft.lots ?? 0, instrument) : 0),
-    [instrument, draft.entry, draft.sl, draft.lots],
+    () =>
+      instrument
+        ? calculateTradeRisk(draft.entry, draft.sl, draft.lots ?? 0, instrument, conversionRate)
+        : 0,
+    [instrument, draft.entry, draft.sl, draft.lots, conversionRate],
   )
   const riskValue = riskTouched ? draft.riskAmount : calculatedRisk
   const effectiveRisk = riskValue ?? 0
@@ -212,6 +228,7 @@ export function TradeForm({
             exit: draft.exit,
             lots: draft.lots ?? 0,
             spec: instrument,
+            conversionRate,
             commission: draft.commission,
             swap: draft.swap,
           })
@@ -225,7 +242,16 @@ export function TradeForm({
             priceMove: 0,
             points: 0,
           },
-    [instrument, draft.direction, draft.entry, draft.exit, draft.lots, draft.commission, draft.swap],
+    [
+      instrument,
+      draft.direction,
+      draft.entry,
+      draft.exit,
+      draft.lots,
+      draft.commission,
+      draft.swap,
+      conversionRate,
+    ],
   )
   const pnlValue = pnlTouched ? draft.pnl : calculatedPnl.pnl
   const effectivePnl = pnlValue ?? 0
@@ -319,6 +345,7 @@ export function TradeForm({
       grossPnl: calculatedPnl.gross,
       commission: draft.commission ?? 0,
       swap: draft.swap ?? 0,
+      conversionRate: crossPair && conversionRate != null ? conversionRate : undefined,
       pnl: effectivePnl,
       result,
       rMultiple: rValue,
@@ -583,19 +610,19 @@ export function TradeForm({
                 label="Entry price"
                 value={draft.entry}
                 onChange={(value) => patch({ entry: value })}
-                suffix="USD"
+                suffix={priceUnit}
               />
               <NumberField
                 label="Exit price"
                 value={draft.exit}
                 onChange={(value) => patch({ exit: value })}
-                suffix="USD"
+                suffix={priceUnit}
               />
               <NumberField
                 label="Stop Loss (optional)"
                 value={draft.sl}
                 onChange={(value) => patch({ sl: value })}
-                suffix="USD"
+                suffix={priceUnit}
                 placeholder="None"
                 hint="Leave empty if the trade had no stop."
               />
@@ -603,7 +630,7 @@ export function TradeForm({
                 label="Take Profit (optional)"
                 value={draft.tp}
                 onChange={(value) => patch({ tp: value })}
-                suffix="USD"
+                suffix={priceUnit}
                 placeholder="None"
                 hint="Leave empty if the trade had no target."
               />
@@ -617,7 +644,9 @@ export function TradeForm({
                 error={lotIssue}
                 hint={
                   instrument && draft.lots && draft.lots > 0 && !lotIssue
-                    ? `${num(draft.lots * instrument.contractSize, 2)} oz · ${money(valuePerPriceUnit(instrument) * draft.lots)} per $1 move`
+                    ? conversionKind(instrument) === 'usd'
+                      ? `${num(draft.lots * instrument.contractSize, 2)} units · ${money(valuePerPriceUnit(instrument) * draft.lots)} per 1.00 price move`
+                      : `${num(draft.lots * instrument.contractSize, 0)} units · ${num(instrument.contractSize * draft.lots, 0)} ${priceUnit} per 1.00 price move`
                     : `Min ${formatLots(instrument?.minLot ?? 0.01)} · step ${formatLots(instrument?.lotStep ?? 0.01)}`
                 }
               />
@@ -635,7 +664,7 @@ export function TradeForm({
                     ? 'Manual risk amount — used for the R multiple.'
                     : draft.sl == null
                       ? 'Optional. Without a stop or a risk amount, R stats skip this trade.'
-                      : `Auto: SL distance × ${instrument ? valuePerPriceUnit(instrument) : '—'} (contract size) × lots.`
+                      : `Auto: SL distance × contract size × lots${priceUnit !== 'USD' ? `, converted from ${priceUnit} to USD` : ''}.`
                 }
               />
               <NumberField
@@ -654,6 +683,17 @@ export function TradeForm({
                 placeholder="0.00"
                 hint="Overnight swap from MT5 (+ or -)."
               />
+              {crossPair ? (
+                <NumberField
+                  label={`${crossPair.symbol} rate at close`}
+                  value={conversionRate}
+                  onChange={(value) => patch({ conversionRate: value })}
+                  step={0.00001}
+                  min={0}
+                  error={conversionRate == null || !(conversionRate > 0) ? `Needed to convert ${priceUnit} profit to USD.` : undefined}
+                  hint={`${priceUnit} profit is converted to USD with this rate, like MT5. Default comes from Settings.`}
+                />
+              ) : null}
               <NumberField
                 label="Net profit / loss"
                 value={pnlValue}
@@ -789,9 +829,14 @@ export function TradeForm({
 
             <div className="mt-2 text-[10px] leading-relaxed text-dim">
               MT5 formula for {instrument?.symbol ?? 'the instrument'}: BUY = (exit − entry), SELL =
-              (entry − exit), × {instrument ? valuePerPriceUnit(instrument) : '—'} (contract size) × lots,
-              rounded to cents. A $1 move is $1 at 0.01 lot, $10 at 0.10 lot and $100 at 1.00 lot.
-              Net P/L = profit + commission + swap, so it should match the MT5 history tab.
+              (entry − exit), × {instrument ? num(instrument.contractSize, 0) : '—'} (contract size) × lots
+              {instrument && conversionKind(instrument) === 'inverse'
+                ? `, in ${priceUnit}, then ÷ the exit price to get USD`
+                : crossPair
+                  ? `, in ${priceUnit}, then converted with the ${crossPair.symbol} rate`
+                  : ''}
+              , rounded to cents. Net P/L = profit + commission + swap, so it should match the MT5
+              history tab.
             </div>
           </section>
 

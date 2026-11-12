@@ -55,6 +55,15 @@ export interface InstrumentSpec {
   minLot: number
   lotStep: number
   maxLot: number
+  /** Currency the price is quoted in (second currency of a pair). Missing = USD. */
+  quoteCurrency?: string
+  /** First currency of a forex pair, e.g. EUR in EURUSD. Used for margin. */
+  baseCurrency?: string
+  /**
+   * For crosses whose quote currency is not USD (EURJPY, EURGBP…): the latest price of the
+   * USD pair MT5 uses to convert profit, e.g. USDJPY for JPY, GBPUSD for GBP.
+   */
+  conversionRate?: number
 }
 
 export interface SetupDef {
@@ -175,6 +184,8 @@ export interface Trade {
   sl: number | null
   tp: number | null
   lots: number
+  /** Rate of the USD conversion pair at close, for crosses such as EURJPY (see InstrumentSpec). */
+  conversionRate?: number
   /** 0 when the trade had no stop loss and no manual risk — R stats skip it. */
   riskAmount: number
   /** MT5 "Profit" column (price result before costs). */
