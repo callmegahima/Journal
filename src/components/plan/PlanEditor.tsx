@@ -278,14 +278,23 @@ export function PlanEditor({
     [instrument, draft.direction, draft.entry, draft.sl, position.lots, balance, settings.leverage, settings.stopOutPct, conversionRate],
   )
 
+  // News trades skip the strategy checklist: only the numerical risk rules decide.
+  const newsSetupName =
+    settings.setups.find((setup) => setup.id === 'news-trade')?.name ?? 'News trade'
+  const isNewsTrade = draft.setup === newsSetupName
+  const activeItems = useMemo(
+    () => (isNewsTrade ? [] : draft.items),
+    [isNewsTrade, draft.items],
+  )
+
   const { scores, overallPct } = useMemo(
-    () => scoreChecklist(draft.items),
-    [draft.items],
+    () => scoreChecklist(activeItems),
+    [activeItems],
   )
   const decisionEval = useMemo(
     () =>
       evaluateDecision({
-        items: draft.items,
+        items: activeItems,
         entry: draft.entry,
         sl: draft.sl,
         tp: draft.tp,
@@ -296,7 +305,7 @@ export function PlanEditor({
         settings,
         riskStatus,
       }),
-    [draft.items, draft.entry, draft.sl, draft.tp, draft.direction, draft.riskPct, position, settings, riskStatus],
+    [activeItems, draft.entry, draft.sl, draft.tp, draft.direction, draft.riskPct, position, settings, riskStatus],
   )
 
   const relevantTemplates = useMemo(
@@ -356,7 +365,7 @@ export function PlanEditor({
     levelPrice: draft.levelPrice,
     templateId: draft.templateId,
     templateName: activeTemplateName,
-    items: draft.items,
+    items: activeItems,
     decision: decisionEval.decision,
     notes: draft.checklistNotes,
     screenshot: draft.screenshot,
@@ -478,9 +487,7 @@ export function PlanEditor({
       await persistDraft(nextStatus)
       setSaveState('saved')
       toast(
-        decisionEval.decision === 'READY'
-          ? 'Plan saved. Checklist status: READY.'
-          : `Plan saved. Checklist status: ${decisionEval.decision}.`,
+        `Plan saved. ${isNewsTrade ? 'Risk check' : 'Checklist status'}: ${decisionEval.decision}.`,
         decisionEval.decision === 'NO TRADE' ? 'info' : 'success',
       )
       onClose()
@@ -950,6 +957,70 @@ export function PlanEditor({
         </div>
 
         <div className="min-w-0 space-y-3 lg:sticky lg:top-0 lg:self-start">
+{isNewsTrade ? (
+          <>
+          <section className="card p-4">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Shield size={15} className="text-accent-2" />
+                <h3 className="text-[13px] font-semibold">Risk check</h3>
+              </div>
+              <Badge
+                variant={
+                  decisionEval.decision === 'READY'
+                    ? 'green'
+                    : decisionEval.decision === 'WAIT'
+                      ? 'amber'
+                      : 'red'
+                }
+              >
+                {decisionEval.decision}
+              </Badge>
+            </div>
+            <p className="text-[11px] leading-relaxed text-muted">
+              News trades skip the strategy checklist. The decision comes only from your numerical
+              risk rules: entry, stop loss and take profit set, R:R, max risk and daily/weekly loss
+              limits. Check the margin box for stop out before the release.
+            </p>
+            {decisionEval.blockers.length > 0 ? (
+              <ul className="mt-3 space-y-1.5">
+                {decisionEval.blockers.map((blocker) => (
+                  <li
+                    key={blocker}
+                    className="flex items-start gap-1.5 text-[11px] leading-relaxed text-loss"
+                  >
+                    <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                    <span>{blocker}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-3 text-[11px] font-medium text-profit">
+                All risk rules pass. This is a numbers check, not a trade signal.
+              </p>
+            )}
+            <div className="mt-3">
+              <label className="label" htmlFor="news-notes">
+                Notes
+              </label>
+              <textarea
+                id="news-notes"
+                className="input min-h-[80px]"
+                value={draft.checklistNotes}
+                onChange={(event) => patch({ checklistNotes: event.target.value })}
+                placeholder="Forecast vs previous, what you expect on release, spread at the time…"
+              />
+            </div>
+          </section>
+          <ImageLightbox
+            src={draft.screenshot}
+            alt="Plan chart screenshot"
+            open={viewerOpen}
+            onClose={() => setViewerOpen(false)}
+          />
+          </>
+          ) : (
+          <>
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-panel px-3.5 py-2.5">
             <div className="flex items-center gap-2 text-[11px] text-muted">
               <ClipboardCheck size={14} className="text-accent-2" />
@@ -1002,6 +1073,8 @@ export function PlanEditor({
             Checklist notes and progress autosave with this plan. The decision is computed from
             your checklist template and numerical risk rules — never from a broker connection.
           </InfoNote>
+          </>
+          )}
         </div>
       </div>
     </Modal>

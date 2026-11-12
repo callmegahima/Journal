@@ -570,7 +570,11 @@ export function TradingPlanPage() {
                       />
                     </div>
 
-                    {run ? (
+                    {run && run.items.length === 0 ? (
+                      <div className="mt-3 text-[10px] text-dim">
+                        No strategy checklist (news trade) · risk check: {run.decision}
+                      </div>
+                    ) : run ? (
                       <div className="mt-3">
                         <div className="mb-1 flex items-center justify-between text-[10px]">
                           <span className="text-dim">Checklist</span>
