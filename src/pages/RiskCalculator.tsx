@@ -36,7 +36,8 @@ import {
   pointsFromPrice,
   tickValueFor,
   valuePerPriceUnit,
-  type PositionResult, conversionPair, quoteCurrencyOf } from '@/lib/calc'
+  type PositionResult, conversionPair, quoteCurrencyOf, checkMargin } from '@/lib/calc'
+import { MarginCheckPanel } from '@/components/trades/MarginCheckPanel'
 import { computeRiskStatus } from '@/lib/metrics'
 import {
   lots as formatLots,
@@ -174,6 +175,19 @@ export function RiskCalculatorPage() {
   const margin = spec
     ? calculateMargin(exitLots || position?.lots || 0, entry, spec, settings.leverage, conversionRate)
     : 0
+  const marginCheck = spec
+    ? checkMargin({
+        direction,
+        entry,
+        sl,
+        lots: position?.lots ?? 0,
+        balance,
+        spec,
+        leverage: settings.leverage,
+        stopOutPct: settings.stopOutPct,
+        conversionRate,
+      })
+    : null
   const blockers = useMemo(() => {
     const list: string[] = []
     if (!position) {
@@ -1057,6 +1071,17 @@ export function RiskCalculatorPage() {
                     margin > balance && balance > 0 ? ' Exceeds your balance — MT5 would reject this order.' : ''
                   }`}
                 />
+                {marginCheck ? (
+                  <MarginCheckPanel
+                    check={marginCheck}
+                    lots={position?.lots ?? 0}
+                    balance={balance}
+                    leverage={settings.leverage}
+                    stopOutPct={settings.stopOutPct}
+                    decimals={digits}
+                    onUseMax={(value) => setManualLots(value)}
+                  />
+                ) : null}
               </div>
             </div>
           </Card>

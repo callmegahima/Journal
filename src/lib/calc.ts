@@ -403,6 +403,86 @@ export function calculateMargin(
   return roundTo((lots * spec.contractSize * openPrice * toUsd) / leverage, 2)
 }
 
+export interface MarginCheck {
+  /** USD margin for 1.00 lot at the entry price. */
+  marginPerLot: number
+  /** USD margin for the planned lots. */
+  marginRequired: number
+  /** Largest lot size the balance can open (floored to the lot step, capped at max lot). */
+  maxLots: number
+  /** Equity ÷ margin × 100 right after opening; null without a position. */
+  marginLevel: number | null
+  /** Price where equity ÷ margin hits the stop out level; null when it cannot be worked out. */
+  stopOutPrice: number | null
+  /** True when the stop out price comes before the stop loss. */
+  stopOutBeforeSl: boolean
+  /** True when the planned lots need more margin than the balance. */
+  insufficient: boolean
+}
+
+/**
+ * MT5 margin check for one new position, assuming no other trades are open
+ * (free margin = balance).
+ */
+export function checkMargin(input: {
+  direction: Direction
+  entry: number | null
+  sl: number | null
+  lots: number
+  balance: number
+  spec: InstrumentSpec
+  leverage: number
+  stopOutPct: number
+  conversionRate?: number | null
+}): MarginCheck {
+  const { direction, entry, sl, lots, balance, spec, leverage, stopOutPct, conversionRate } = input
+  const empty: MarginCheck = {
+    marginPerLot: 0,
+    marginRequired: 0,
+    maxLots: 0,
+    marginLevel: null,
+    stopOutPrice: null,
+    stopOutBeforeSl: false,
+    insufficient: false,
+  }
+  if (entry == null || !(entry > 0) || !(leverage > 0)) return empty
+  const toUsd = quoteToUsd(spec, entry, conversionRate)
+  const marginPerLot = (spec.contractSize * entry * toUsd) / leverage
+  if (!(marginPerLot > 0)) return empty
+
+  let maxLots = balance > 0 ? floorToStep(balance / marginPerLot, spec.lotStep) : 0
+  if (maxLots > spec.maxLot) maxLots = spec.maxLot
+  if (maxLots < spec.minLot) maxLots = 0
+
+  const marginRequired = lots > 0 ? roundTo(marginPerLot * lots, 2) : 0
+  const insufficient = lots > 0 && marginRequired > balance
+  const marginLevel = marginRequired > 0 ? (balance / marginRequired) * 100 : null
+
+  // Equity falls by (move × value per unit × lots); stop out when equity = stopOut% × margin.
+  let stopOutPrice: number | null = null
+  let stopOutBeforeSl = false
+  const vpp = valuePerPriceUnit(spec, sl ?? entry, conversionRate)
+  if (marginRequired > 0 && vpp > 0 && !insufficient) {
+    const lossToStopOut = balance - (stopOutPct / 100) * marginRequired
+    const distance = Math.max(0, lossToStopOut) / (vpp * lots)
+    stopOutPrice = direction === 'BUY' ? entry - distance : entry + distance
+    if (stopOutPrice <= 0) stopOutPrice = null
+    if (stopOutPrice != null && sl != null && sl > 0) {
+      stopOutBeforeSl = direction === 'BUY' ? stopOutPrice > sl : stopOutPrice < sl
+    }
+  }
+
+  return {
+    marginPerLot: roundTo(marginPerLot, 2),
+    marginRequired,
+    maxLots,
+    marginLevel,
+    stopOutPrice,
+    stopOutBeforeSl,
+    insufficient,
+  }
+}
+
 export function calculateTradeRisk(
   entry: number | null,
   sl: number | null,

@@ -34,7 +34,8 @@ import { Button, Badge, InfoNote, ProgressBar } from '@/components/ui/primitives
 import { NumberField } from '@/components/ui/form'
 import { ImageUpload, ImageLightbox } from '@/components/ui/ImageUpload'
 import { ChecklistPanel } from '@/components/checklist/ChecklistPanel'
-import { calculatePosition, decimalsForStep, quoteCurrencyOf, conversionPair } from '@/lib/calc'
+import { calculatePosition, decimalsForStep, quoteCurrencyOf, conversionPair, checkMargin } from '@/lib/calc'
+import { MarginCheckPanel } from '@/components/trades/MarginCheckPanel'
 import type { PositionResult } from '@/lib/calc'
 import { computeRiskStatus, sessionForInstant } from '@/lib/metrics'
 import {
@@ -255,6 +256,24 @@ export function PlanEditor({
       conversionRate,
     })
   }, [draft.direction, draft.entry, draft.sl, draft.tp, draft.riskPct, draft.lotsOverride, conversionRate, balance, instrument, settings.minRR, settings.maxRiskPct])
+
+  const marginCheck = useMemo(
+    () =>
+      instrument
+        ? checkMargin({
+            direction: draft.direction,
+            entry: draft.entry,
+            sl: draft.sl,
+            lots: position.lots,
+            balance,
+            spec: instrument,
+            leverage: settings.leverage,
+            stopOutPct: settings.stopOutPct,
+            conversionRate,
+          })
+        : null,
+    [instrument, draft.direction, draft.entry, draft.sl, position.lots, balance, settings.leverage, settings.stopOutPct, conversionRate],
+  )
 
   const { scores, overallPct } = useMemo(
     () => scoreChecklist(draft.items),
@@ -763,6 +782,19 @@ export function PlanEditor({
                 />
               ) : null}
             </div>
+
+            {marginCheck ? (
+              <MarginCheckPanel
+                className="mt-3"
+                check={marginCheck}
+                lots={position.lots}
+                balance={balance}
+                leverage={settings.leverage}
+                stopOutPct={settings.stopOutPct}
+                decimals={decimals}
+                onUseMax={(value) => patch({ lotsOverride: value })}
+              />
+            ) : null}
 
             <div className="mt-4">
               <span className="label">Risk per trade</span>

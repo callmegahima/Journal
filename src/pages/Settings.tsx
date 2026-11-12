@@ -111,6 +111,7 @@ export function SettingsPage() {
     weeklyLossLimitPct: settings.weeklyLossLimitPct,
     minRR: settings.minRR,
     leverage: settings.leverage,
+    stopOutPct: settings.stopOutPct,
   })
   const [instruments, setInstruments] = useState<InstrumentSpec[]>(
     settings.instruments.map((instrument) => ({ ...instrument })),
@@ -145,6 +146,7 @@ export function SettingsPage() {
       weeklyLossLimitPct: settings.weeklyLossLimitPct,
       minRR: settings.minRR,
       leverage: settings.leverage,
+      stopOutPct: settings.stopOutPct,
     })
     setInstruments(settings.instruments.map((instrument) => ({ ...instrument })))
     setActiveInstrumentId(settings.activeInstrumentId)
@@ -777,6 +779,18 @@ export function SettingsPage() {
                 step={1}
                 prefix="1:"
                 hint="Same as in MT5. Used only for the margin estimate: lots × contract size × price ÷ leverage."
+              />
+              <NumberField
+                label="Stop out level"
+                value={risk.stopOutPct}
+                onChange={(value) =>
+                  setRisk((current) => ({ ...current, stopOutPct: value ?? 0 }))
+                }
+                min={0}
+                max={200}
+                step={1}
+                suffix="%"
+                hint="Margin level where your broker closes trades (MT5 → symbol Specification or account info). Often 50%."
               />
               <div className="rounded-lg border border-line/80 bg-ink/40 p-3">
                 <div className="text-[10px] uppercase tracking-[0.08em] text-dim">

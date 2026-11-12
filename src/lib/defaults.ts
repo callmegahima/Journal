@@ -363,6 +363,7 @@ export function buildDefaultSettings(): Settings {
     maxRiskPct: 2,
     minRR: 2,
     leverage: 100,
+    stopOutPct: 50,
     instruments: INSTRUMENT_PRESETS.map(presetInstrument),
     activeInstrumentId: XAUUSD_SPEC.id,
     instrumentPresetsVersion: INSTRUMENT_PRESETS_VERSION,
@@ -429,6 +430,8 @@ export function hydrateSettings(raw: Partial<Settings> | undefined): Settings {
     instrumentPresetsVersion: INSTRUMENT_PRESETS_VERSION,
     leverage:
       typeof raw.leverage === 'number' && raw.leverage > 0 ? raw.leverage : defaults.leverage,
+    stopOutPct:
+      typeof raw.stopOutPct === 'number' && raw.stopOutPct >= 0 ? raw.stopOutPct : defaults.stopOutPct,
     instruments,
     checklistItems: mergedItems,
     setups: mergedSetups,

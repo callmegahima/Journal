@@ -126,6 +126,8 @@ export interface Settings {
   minRR: number
   /** Account leverage, e.g. 100 for 1:100. Used for MT5 margin. */
   leverage: number
+  /** Broker stop out level in % (MT5 closes trades when equity ÷ margin falls to this). */
+  stopOutPct: number
   instruments: InstrumentSpec[]
   activeInstrumentId: string
   /** Which batch of built-in markets has been added to `instruments` (so deleted ones stay deleted). */
