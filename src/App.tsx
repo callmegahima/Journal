@@ -29,6 +29,9 @@ const StrategyPage = lazy(() =>
 const MarginCalculatorPage = lazy(() =>
   import('@/pages/MarginCalculator').then((module) => ({ default: module.MarginCalculatorPage })),
 )
+const NewsTradePage = lazy(() =>
+  import('@/pages/MarginCalculator').then((module) => ({ default: module.NewsTradePage })),
+)
 const RiskCalculatorPage = lazy(() =>
   import('@/pages/RiskCalculator').then((module) => ({ default: module.RiskCalculatorPage })),
 )
@@ -155,6 +158,7 @@ function JournalApp() {
           <Route path="/strategy" element={<StrategyPage />} />
           <Route path="/risk" element={<RiskCalculatorPage />} />
           <Route path="/margin" element={<MarginCalculatorPage />} />
+          <Route path="/news" element={<NewsTradePage />} />
           <Route path="/psychology" element={<PsychologyPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/settings" element={<SettingsPage />} />

@@ -13,6 +13,7 @@ import {
   Lock,
   LogOut,
   Menu,
+  Newspaper,
   Plus,
   Settings,
   ShieldAlert,
@@ -42,6 +43,7 @@ const GROUPS: { label: string; items: NavItem[] }[] = [
     items: [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
       { to: '/plan', label: 'Trading Plan', icon: ClipboardList },
+      { to: '/news', label: 'News Trade', icon: Newspaper },
       { to: '/journal', label: 'Trade Journal', icon: BookOpen },
       { to: '/calendar', label: 'Calendar', icon: CalendarDays },
     ],

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ClipboardList, Gauge, Newspaper, RotateCcw, Scale } from 'lucide-react'
+import { CalendarDays, ClipboardList, Gauge, Newspaper, RotateCcw, Scale } from 'lucide-react'
 import type { Direction, Plan } from '@/types'
 import { DIRECTIONS } from '@/types'
 import { useData } from '@/store/DataContext'
@@ -17,6 +17,16 @@ const LEVERAGES = [30, 50, 100, 200, 300, 500, 1000]
 
 /** Work out margin before planning a trade: how much a size needs and how big you can go. */
 export function MarginCalculatorPage() {
+  return <MarginTool variant="margin" />
+}
+
+/** Plan a trade around a news release, with the margin check built in. */
+export function NewsTradePage() {
+  return <MarginTool variant="news" />
+}
+
+function MarginTool({ variant }: { variant: 'margin' | 'news' }) {
+  const isNews = variant === 'news'
   const { data } = useData()
   const navigate = useNavigate()
   const { settings, trades } = data
@@ -36,6 +46,7 @@ export function MarginCalculatorPage() {
   const [stopOutPct, setStopOutPct] = useState<number | null>(settings.stopOutPct)
   const [entry, setEntry] = useState<number | null>(null)
   const [sl, setSl] = useState<number | null>(null)
+  const [tp, setTp] = useState<number | null>(null)
   const [lotsInput, setLotsInput] = useState<number | null>(null)
   const crossPair = spec ? conversionPair(spec) : null
   const [rateInput, setRateInput] = useState<number | null>(null)
@@ -150,7 +161,7 @@ export function MarginCalculatorPage() {
       direction,
       entry,
       sl,
-      tp: null,
+      tp,
       lotsOverride: lots > 0 ? lots : undefined,
       conversionRate: crossPair && conversionRate != null ? conversionRate : undefined,
       setup: newsSetup?.name ?? 'News trade',
@@ -168,6 +179,7 @@ export function MarginCalculatorPage() {
     setStopOutPct(settings.stopOutPct)
     setEntry(null)
     setSl(null)
+    setTp(null)
     setLotsInput(null)
     setRateInput(null)
     setNewsEvent('')
@@ -176,17 +188,23 @@ export function MarginCalculatorPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        eyebrow="Margin Calculator"
-        title="Check margin before you plan"
-        description="See how much margin a lot size needs, the biggest size your balance can open and where MT5 would stop you out. Uses the MT5 formula: lots × contract size × price ÷ leverage."
+        eyebrow={isNews ? 'News Trade' : 'Margin Calculator'}
+        title={isNews ? 'Plan a trade around a news release' : 'Check margin before you plan'}
+        description={
+          isNews
+            ? 'Pick the release, set entry and stop loss, check the size against margin and stop out (spreads widen and price can gap on news), then open it as a plan.'
+            : 'See how much margin a lot size needs, the biggest size your balance can open and where MT5 would stop you out. Uses the MT5 formula: lots × contract size × price ÷ leverage.'
+        }
         actions={
           <>
             <Button variant="ghost" onClick={reset}>
               <RotateCcw size={14} /> Reset
             </Button>
-            <Button variant="primary" onClick={planNewsTrade} disabled={!spec}>
-              <Newspaper size={14} /> Plan a news trade
-            </Button>
+            {isNews ? (
+              <Button variant="primary" onClick={planNewsTrade} disabled={!spec}>
+                <Newspaper size={14} /> Plan this trade
+              </Button>
+            ) : null}
           </>
         }
       />
@@ -199,13 +217,41 @@ export function MarginCalculatorPage() {
             icon={<Gauge size={14} />}
           />
           <div className="space-y-4 p-4">
+            {isNews ? (
+            <div>
+              <label className="label" htmlFor="margin-news">
+                News event
+              </label>
+              <input
+                id="margin-news"
+                className="input"
+                list="margin-news-events"
+                value={newsEvent}
+                onChange={(event) => setNewsEvent(event.target.value)}
+                placeholder="e.g. NFP 15:30, CPI, FOMC"
+              />
+              <datalist id="margin-news-events">
+                {upcomingEvents.map((event) => (
+                  <option key={event.id} value={`${event.title} (${event.date})`}>
+                    {event.impact} impact
+                  </option>
+                ))}
+              </datalist>
+              <p className="mt-1 text-[10px] text-dim">
+                {upcomingEvents.length > 0
+                  ? 'Pick an upcoming event from your Calendar or type one.'
+                  : 'Type the release. Events added in Calendar show up here.'}
+              </p>
+            </div>
+            ) : null}
+
             <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
               <div>
-                <label className="label" htmlFor="margin-instrument">
+                <label className="label" htmlFor={`${variant}-instrument`}>
                   Instrument
                 </label>
                 <select
-                  id="margin-instrument"
+                  id={`${variant}-instrument`}
                   className="input"
                   value={instrumentId}
                   onChange={(event) => {
@@ -284,7 +330,7 @@ export function MarginCalculatorPage() {
               />
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className={cn('grid gap-3', isNews ? 'sm:grid-cols-2' : 'sm:grid-cols-3')}>
               <NumberField
                 label="Entry price"
                 value={entry}
@@ -311,6 +357,15 @@ export function MarginCalculatorPage() {
                 min={0}
                 hint="Checks whether stop out comes first."
               />
+              {isNews ? (
+                <NumberField
+                  label="Take profit (optional)"
+                  value={tp}
+                  onChange={setTp}
+                  suffix={unit}
+                  min={0}
+                />
+              ) : null}
             </div>
 
             {crossPair ? (
@@ -327,32 +382,6 @@ export function MarginCalculatorPage() {
               </div>
             ) : null}
 
-            <div>
-              <label className="label" htmlFor="margin-news">
-                News event (optional)
-              </label>
-              <input
-                id="margin-news"
-                className="input"
-                list="margin-news-events"
-                value={newsEvent}
-                onChange={(event) => setNewsEvent(event.target.value)}
-                placeholder="e.g. NFP 15:30, CPI, FOMC"
-              />
-              <datalist id="margin-news-events">
-                {upcomingEvents.map((event) => (
-                  <option key={event.id} value={`${event.title} (${event.date})`}>
-                    {event.impact} impact
-                  </option>
-                ))}
-              </datalist>
-              <p className="mt-1 text-[10px] text-dim">
-                {upcomingEvents.length > 0
-                  ? 'Pick an upcoming event from your Calendar or type one.'
-                  : 'Type the release. Events added in Calendar show up here.'}
-              </p>
-            </div>
-
             {entry == null ? (
               <p className="text-[11px] text-dim">Enter the entry price to see the margin.</p>
             ) : check ? (
@@ -367,20 +396,73 @@ export function MarginCalculatorPage() {
               />
             ) : null}
 
+            {isNews ? (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-accent/25 bg-accent/[0.04] p-3">
               <p className="min-w-0 flex-1 text-[11px] leading-relaxed text-muted">
                 Open a new plan with this instrument, direction, entry, stop loss
-                {lots > 0 ? ` and ${formatLots(lots)} lots` : ''}, set to the News trade setup. You
-                still add the take profit and run the checklist there.
+                {tp != null ? ', take profit' : ''}
+                {lots > 0 ? ` and ${formatLots(lots)} lots` : ''}, set to the News trade setup. Run
+                the checklist there before taking it.
               </p>
               <Button variant="primary" onClick={planNewsTrade} disabled={!spec}>
-                <ClipboardList size={14} /> Plan a news trade
+                <ClipboardList size={14} /> Plan this trade
               </Button>
             </div>
+            ) : null}
           </div>
         </Card>
 
         <div className="space-y-4">
+          {isNews ? (
+            <Card>
+              <CardHeader
+                title="Upcoming events"
+                subtitle="From your Calendar. Tap one to use it."
+                icon={<CalendarDays size={14} />}
+                action={
+                  <Button size="sm" variant="ghost" onClick={() => navigate('/calendar')}>
+                    Add events
+                  </Button>
+                }
+              />
+              {upcomingEvents.length === 0 ? (
+                <p className="p-4 text-[11px] text-dim">
+                  No upcoming events. Add high-impact releases in Calendar and they show up here.
+                </p>
+              ) : (
+                <div className="divide-y divide-line/60">
+                  {upcomingEvents.slice(0, 8).map((event) => (
+                    <button
+                      key={event.id}
+                      type="button"
+                      onClick={() => setNewsEvent(`${event.title} (${event.date})`)}
+                      className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left transition hover:bg-panel-2/50"
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-[12px] font-medium text-fg">
+                          {event.title}
+                        </span>
+                        <span className="text-[10px] text-dim">{event.date}</span>
+                      </span>
+                      <span
+                        className={cn(
+                          'shrink-0 rounded-md border px-1.5 py-0.5 text-[9px] font-semibold',
+                          event.impact === 'High'
+                            ? 'border-loss/30 text-loss'
+                            : event.impact === 'Medium'
+                              ? 'border-warn/30 text-warn'
+                              : 'border-line text-dim',
+                        )}
+                      >
+                        {event.impact}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Card>
+          ) : null}
+
           <Card>
             <CardHeader
               title="Margin by lot size"
@@ -455,6 +537,7 @@ export function MarginCalculatorPage() {
             )}
           </Card>
 
+          {!isNews ? (
           <Card>
             <CardHeader
               title="Max lots by leverage"
@@ -501,6 +584,7 @@ export function MarginCalculatorPage() {
               </div>
             )}
           </Card>
+          ) : null}
         </div>
       </div>
     </div>
