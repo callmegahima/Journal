@@ -28,6 +28,7 @@ import { CHECKLIST_GROUP_LABELS, CHECKLIST_GROUP_ORDER } from '@/types'
 import type { Settings } from '@/types'
 import { useGroupLabel } from '@/components/checklist/useGroupLabel'
 import { clearBuiltins, restoreBuiltins } from '@/lib/defaults'
+import { SetupBuilder, templateForSetup } from '@/components/strategy/SetupBuilder'
 import { useData } from '@/store/DataContext'
 import { useToast } from '@/store/ToastContext'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -117,7 +118,14 @@ function SetupForm({
         const playbook = current.playbook.some((entry) => entry.setupId === next.id)
           ? current.playbook
           : [...current.playbook, { setupId: next.id, notes: '', customCriteria: '' }]
-        return { ...current, setups, playbook }
+        // Keep the setup's own checklist linked when it is renamed.
+        const templates =
+          setup && setup.name !== next.name
+            ? current.templates.map((template) =>
+                template.setupName === setup.name ? { ...template, setupName: next.name } : template,
+              )
+            : current.templates
+        return { ...current, setups, playbook, templates }
       })
       toast(setup ? 'Setup updated.' : 'Setup added to your playbook.', 'success')
       onClose()
@@ -638,6 +646,7 @@ export function StrategyPage() {
   const [tab, setTab] = useState<TabId>('setups')
   const [search, setSearch] = useState('')
   const [setupForm, setSetupForm] = useState<{ setup?: SetupDef } | null>(null)
+  const [builder, setBuilder] = useState<{ setup?: SetupDef } | null>(null)
   const [itemForm, setItemForm] = useState<{ item?: ChecklistItemDef; group?: ChecklistGroup } | null>(
     null,
   )
@@ -868,7 +877,7 @@ export function StrategyPage() {
             <Button
               variant="primary"
               onClick={() => {
-                if (tab === 'setups') setSetupForm({})
+                if (tab === 'setups') setBuilder({})
                 else if (tab === 'items') setItemForm({})
                 else if (tab === 'templates') setTemplateForm({})
                 else navigate('/plan?new=1')
@@ -876,7 +885,7 @@ export function StrategyPage() {
             >
               <Plus size={14} />
               {tab === 'setups'
-                ? 'New setup'
+                ? 'Add my setup'
                 : tab === 'items'
                   ? 'New item'
                   : tab === 'templates'
@@ -924,11 +933,14 @@ export function StrategyPage() {
           <div className="text-[12px] font-semibold text-fg">Use your own strategy</div>
           <p className="text-[10px] leading-relaxed text-dim">
             Everything here can be edited or deleted, including the built-in price action + S&amp;R
-            strategy. Start from a clean slate, then add your own setups, checklist items and
-            templates.
+            strategy. Add your own setup with its checklist in one step, and it loads automatically
+            when you pick that setup in a trade plan.
           </p>
         </div>
         <div className="flex flex-wrap gap-1.5">
+          <Button size="sm" variant="primary" onClick={() => setBuilder({})}>
+            <Plus size={12} /> Add my setup &amp; checklist
+          </Button>
           {builtinCount > 0 ? (
             <Button size="sm" variant="soft" onClick={() => setConfirmClear(true)}>
               <Trash2 size={12} /> Remove built-ins
@@ -1044,6 +1056,16 @@ export function StrategyPage() {
                   </Button>
                   <Button
                     size="sm"
+                    variant="soft"
+                    className="flex-1"
+                    onClick={() => setBuilder({ setup })}
+                    title="Edit this setup's own checklist"
+                  >
+                    <ListChecks size={12} />
+                    {templateForSetup(settings.templates, setup.name) ? 'Checklist' : 'Add checklist'}
+                  </Button>
+                  <Button
+                    size="sm"
                     variant="ghost"
                     onClick={() => navigate(`/journal?new=1`)}
                     title="Log a trade using your journal"
@@ -1077,10 +1099,10 @@ export function StrategyPage() {
                 variant="primary"
                 onClick={() => {
                   setSearch('')
-                  setSetupForm({})
+                  setBuilder({})
                 }}
               >
-                <Plus size={14} /> New setup
+                <Plus size={14} /> Add my setup
               </Button>
             }
           />
@@ -1371,8 +1393,8 @@ export function StrategyPage() {
             title="Add a setup first"
             description="Playbook notes are organised by setup. Create a setup to start writing."
             action={
-              <Button variant="primary" onClick={() => setSetupForm({})}>
-                <Plus size={14} /> New setup
+              <Button variant="primary" onClick={() => setBuilder({})}>
+                <Plus size={14} /> Add my setup
               </Button>
             }
           />
@@ -1388,6 +1410,7 @@ export function StrategyPage() {
       {setupForm ? (
         <SetupForm setup={setupForm.setup} onClose={() => setSetupForm(null)} />
       ) : null}
+      {builder ? <SetupBuilder setup={builder.setup} onClose={() => setBuilder(null)} /> : null}
       {itemForm ? (
         <ItemForm item={itemForm.item} group={itemForm.group} onClose={() => setItemForm(null)} />
       ) : null}
