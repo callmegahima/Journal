@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
-import { Gauge, RotateCcw, Scale } from 'lucide-react'
-import type { Direction } from '@/types'
+import { useNavigate } from 'react-router-dom'
+import { ClipboardList, Gauge, Newspaper, RotateCcw, Scale } from 'lucide-react'
+import type { Direction, Plan } from '@/types'
 import { DIRECTIONS } from '@/types'
 import { useData } from '@/store/DataContext'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -8,7 +9,8 @@ import { Button, Card, CardHeader } from '@/components/ui/primitives'
 import { NumberField } from '@/components/ui/form'
 import { MarginCheckPanel } from '@/components/trades/MarginCheckPanel'
 import { checkMargin, conversionPair, quoteCurrencyOf } from '@/lib/calc'
-import { decimalsForTick, lots as formatLots, money } from '@/lib/format'
+import { decimalsForTick, lots as formatLots, money, price } from '@/lib/format'
+import { todayKey } from '@/lib/dates'
 import { cn } from '@/lib/utils'
 
 const LEVERAGES = [30, 50, 100, 200, 300, 500, 1000]
@@ -16,6 +18,7 @@ const LEVERAGES = [30, 50, 100, 200, 300, 500, 1000]
 /** Work out margin before planning a trade: how much a size needs and how big you can go. */
 export function MarginCalculatorPage() {
   const { data } = useData()
+  const navigate = useNavigate()
   const { settings, trades } = data
   const instruments = settings.instruments
   const equity = useMemo(
@@ -36,6 +39,7 @@ export function MarginCalculatorPage() {
   const [lotsInput, setLotsInput] = useState<number | null>(null)
   const crossPair = spec ? conversionPair(spec) : null
   const [rateInput, setRateInput] = useState<number | null>(null)
+  const [newsEvent, setNewsEvent] = useState('')
   const conversionRate = crossPair ? (rateInput ?? spec?.conversionRate ?? null) : null
 
   const freeMargin = Math.max(0, balance ?? 0)
@@ -119,6 +123,44 @@ export function MarginCalculatorPage() {
     })
   }, [spec, entry, direction, freeMargin, stopOut, conversionRate])
 
+  const upcomingEvents = useMemo(() => {
+    const today = todayKey(settings.timezone)
+    return data.events
+      .filter((event) => event.date >= today)
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(0, 20)
+  }, [data.events, settings.timezone])
+
+  const newsSetup = settings.setups.find((setup) => setup.id === 'news-trade')
+
+  const planNewsTrade = () => {
+    if (!spec) return
+    const lines = [`News trade${newsEvent.trim() ? `: ${newsEvent.trim()}` : ''}.`]
+    if (check && check.marginRequired > 0) {
+      lines.push(
+        `Margin check: ${formatLots(lots)} lots needs ${money(check.marginRequired)} margin ` +
+          `(${freeMargin > 0 ? Math.round((check.marginRequired / freeMargin) * 100) : 0}% of ${money(freeMargin)}) at 1:${lev}` +
+          `${check.marginLevel != null ? `, margin level ${Math.round(check.marginLevel)}%` : ''}` +
+          `${check.stopOutPrice != null ? `, stop out at ${price(check.stopOutPrice, digits)} (${stopOut}%)` : ''}.`,
+      )
+      if (check.stopOutBeforeSl) lines.push('Warning: stop out comes before the stop loss.')
+    }
+    const prefill: Partial<Plan> = {
+      instrumentId: spec.id,
+      direction,
+      entry,
+      sl,
+      tp: null,
+      lotsOverride: lots > 0 ? lots : undefined,
+      conversionRate: crossPair && conversionRate != null ? conversionRate : undefined,
+      setup: newsSetup?.name ?? 'News trade',
+      levelType: 'Horizontal level',
+      marketDirection: direction === 'BUY' ? 'Bullish' : 'Bearish',
+      reasoning: lines.join('\n'),
+    }
+    navigate('/plan?new=1', { state: { prefill } })
+  }
+
   const reset = () => {
     setDirection('BUY')
     setBalance(Math.round(equity * 100) / 100)
@@ -128,6 +170,7 @@ export function MarginCalculatorPage() {
     setSl(null)
     setLotsInput(null)
     setRateInput(null)
+    setNewsEvent('')
   }
 
   return (
@@ -137,9 +180,14 @@ export function MarginCalculatorPage() {
         title="Check margin before you plan"
         description="See how much margin a lot size needs, the biggest size your balance can open and where MT5 would stop you out. Uses the MT5 formula: lots × contract size × price ÷ leverage."
         actions={
-          <Button variant="ghost" onClick={reset}>
-            <RotateCcw size={14} /> Reset
-          </Button>
+          <>
+            <Button variant="ghost" onClick={reset}>
+              <RotateCcw size={14} /> Reset
+            </Button>
+            <Button variant="primary" onClick={planNewsTrade} disabled={!spec}>
+              <Newspaper size={14} /> Plan a news trade
+            </Button>
+          </>
         }
       />
 
@@ -279,6 +327,32 @@ export function MarginCalculatorPage() {
               </div>
             ) : null}
 
+            <div>
+              <label className="label" htmlFor="margin-news">
+                News event (optional)
+              </label>
+              <input
+                id="margin-news"
+                className="input"
+                list="margin-news-events"
+                value={newsEvent}
+                onChange={(event) => setNewsEvent(event.target.value)}
+                placeholder="e.g. NFP 15:30, CPI, FOMC"
+              />
+              <datalist id="margin-news-events">
+                {upcomingEvents.map((event) => (
+                  <option key={event.id} value={`${event.title} (${event.date})`}>
+                    {event.impact} impact
+                  </option>
+                ))}
+              </datalist>
+              <p className="mt-1 text-[10px] text-dim">
+                {upcomingEvents.length > 0
+                  ? 'Pick an upcoming event from your Calendar or type one.'
+                  : 'Type the release. Events added in Calendar show up here.'}
+              </p>
+            </div>
+
             {entry == null ? (
               <p className="text-[11px] text-dim">Enter the entry price to see the margin.</p>
             ) : check ? (
@@ -292,6 +366,17 @@ export function MarginCalculatorPage() {
                 onUseMax={(value) => setLotsInput(value)}
               />
             ) : null}
+
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-accent/25 bg-accent/[0.04] p-3">
+              <p className="min-w-0 flex-1 text-[11px] leading-relaxed text-muted">
+                Open a new plan with this instrument, direction, entry, stop loss
+                {lots > 0 ? ` and ${formatLots(lots)} lots` : ''}, set to the News trade setup. You
+                still add the take profit and run the checklist there.
+              </p>
+              <Button variant="primary" onClick={planNewsTrade} disabled={!spec}>
+                <ClipboardList size={14} /> Plan a news trade
+              </Button>
+            </div>
           </div>
         </Card>
 

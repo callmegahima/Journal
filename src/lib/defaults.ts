@@ -99,6 +99,17 @@ export const DEFAULT_SETS: Omit<SetupDef, 'builtin'>[] = [
       'A close through the level, or a failure to produce follow-through after the confirmation, invalidates the setup.',
     active: true,
   },
+  {
+    id: 'news-trade',
+    name: 'News trade',
+    description:
+      'A trade planned around a scheduled high-impact release (NFP, CPI, FOMC…). Spreads widen and price can gap, so size is checked against margin and stop out first.',
+    entryCriteria:
+      'Event and release time noted, margin check done, entry level and stop loss set before the release, size small enough that a gap past the stop does not reach stop out.',
+    invalidation:
+      'Release result goes against the plan, or price spikes through the stop. No re-entry on the first spike; wait for structure.',
+    active: true,
+  },
 ]
 
 export function buildDefaultSetups(): SetupDef[] {

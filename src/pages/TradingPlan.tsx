@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom'
 import {
   ArrowRight,
   Check,
@@ -297,7 +297,8 @@ export function TradingPlanPage() {
   const [search, setSearch] = useState('')
   const [setupFilter, setSetupFilter] = useState('ALL')
   const [historyDecision, setHistoryDecision] = useState<Decision | 'ALL'>('ALL')
-  const [editor, setEditor] = useState<{ plan?: Plan } | null>(null)
+  const [editor, setEditor] = useState<{ plan?: Plan; prefill?: Partial<Plan> } | null>(null)
+  const location = useLocation()
   const [tradePlan, setTradePlan] = useState<Plan | undefined>(undefined)
   const [runDetail, setRunDetail] = useState<ChecklistRun | null>(null)
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null)
@@ -308,7 +309,8 @@ export function TradingPlanPage() {
   useEffect(() => {
     if (searchParams.get('tab') === 'checklists') setTab('history')
     if (searchParams.get('new') === '1') {
-      setEditor({})
+      const prefill = (location.state as { prefill?: Partial<Plan> } | null)?.prefill
+      setEditor(prefill ? { prefill } : {})
       const next = new URLSearchParams(searchParams)
       next.delete('new')
       setSearchParams(next, { replace: true })
@@ -322,7 +324,7 @@ export function TradingPlanPage() {
       next.delete('edit')
       setSearchParams(next, { replace: true })
     }
-  }, [searchParams, plans, setSearchParams])
+  }, [searchParams, plans, setSearchParams, location.state])
 
   const filteredPlans = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -865,7 +867,7 @@ export function TradingPlanPage() {
       )}
 
       {editor ? (
-        <PlanEditor plan={editor.plan} onClose={() => setEditor(null)} />
+        <PlanEditor plan={editor.plan} prefill={editor.prefill} onClose={() => setEditor(null)} />
       ) : null}
 
       {tradePlan ? (

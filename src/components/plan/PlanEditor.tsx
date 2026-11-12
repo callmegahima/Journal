@@ -172,9 +172,12 @@ function CalcStat({
 
 export function PlanEditor({
   plan,
+  prefill,
   onClose,
 }: {
   plan?: Plan
+  /** Starting values for a new plan (e.g. from the Margin Calculator). */
+  prefill?: Partial<Plan>
   onClose: () => void
 }) {
   const { data, savePlan, saveChecklist } = useData()
@@ -185,7 +188,7 @@ export function PlanEditor({
     ? data.checklists.find((run) => run.id === plan.checklistId)
     : undefined
   const [draft, setDraft] = useState<DraftState>(() =>
-    makeInitialDraft(plan, settings, existingRun),
+    makeInitialDraft(plan ?? (prefill as Plan | undefined), settings, existingRun),
   )
   const [changeTick, setChangeTick] = useState(0)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
