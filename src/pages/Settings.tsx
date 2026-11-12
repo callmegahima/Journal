@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import type { InstrumentSpec } from '@/types'
 import { useData } from '@/store/DataContext'
+import { SyncCard } from '@/components/settings/SyncCard'
 import { useToast } from '@/store/ToastContext'
 import { PageHeader } from '@/components/layout/PageHeader'
 import {
@@ -1168,6 +1169,8 @@ export function SettingsPage() {
               </div>
             </Card>
           </div>
+
+          <SyncCard />
 
           <Card>
             <CardHeader

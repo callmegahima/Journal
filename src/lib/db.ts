@@ -11,6 +11,7 @@ import type {
 } from '@/types'
 import { buildDefaultSettings, hydrateSettings } from '@/lib/defaults'
 import type { AutoBackupFolder } from '@/lib/autosave'
+import { markSettingsChanged, recordDeletion } from '@/lib/sync'
 
 const DB_NAME = 'pa-trading-journal'
 const DB_VERSION = 2
@@ -119,6 +120,7 @@ export async function loadAllData(): Promise<AppData> {
 export async function persistSettings(settings: Settings): Promise<void> {
   const db = await getDb()
   await db.put('meta', settings, 'settings')
+  markSettingsChanged()
 }
 
 export async function persistRecord(name: CollectionName, value: unknown): Promise<void> {
@@ -130,6 +132,7 @@ export async function persistRecord(name: CollectionName, value: unknown): Promi
 export async function removeRecord(name: CollectionName, id: string): Promise<void> {
   const db = await getDb()
   await db.delete(name as 'plans', id)
+  recordDeletion(name, id)
 }
 
 export async function replaceAllData(data: AppData): Promise<void> {

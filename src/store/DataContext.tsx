@@ -40,6 +40,28 @@ import {
   type AutoBackupFolder,
   type FolderPermission,
 } from '@/lib/autosave'
+import {
+  decryptPayload,
+  encryptPayload,
+  findSyncGist,
+  fingerprint,
+  loadSyncConfig,
+  loadSyncMeta,
+  mergeData,
+  readSyncGist,
+  saveSyncConfig,
+  saveSyncMeta,
+  WrongPasswordError,
+  writeSyncGist,
+  type SyncPayload,
+} from '@/lib/sync'
+
+export interface SyncStatus {
+  configured: boolean
+  syncing: boolean
+  lastSyncAt: string | null
+  error: string | null
+}
 
 export interface AutoBackupStatus {
   supported: boolean
@@ -77,6 +99,10 @@ interface DataContextValue {
   reconnectAutoBackupFolder: () => Promise<void>
   disconnectAutoBackupFolder: () => Promise<void>
   saveAutoBackupNow: () => Promise<boolean>
+  sync: SyncStatus
+  connectSync: (token: string, password: string) => Promise<void>
+  disconnectSync: () => void
+  syncNow: () => Promise<boolean>
   unlocked: boolean
   unlock: (passcode: string) => Promise<boolean>
   lockNow: () => void
@@ -106,6 +132,7 @@ function serializeBackup(data: AppData): string {
 }
 
 const AUTO_SAVE_DELAY = 800
+const SYNC_DELAY = 4000
 
 const DataContext = createContext<DataContextValue | null>(null)
 
@@ -181,6 +208,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const savingRef = useRef(false)
   const dirtyRef = useRef(false)
   const scheduleRef = useRef<() => void>(() => {})
+  const syncTimer = useRef<number | null>(null)
+  const syncingRef = useRef(false)
+  const syncAgainRef = useRef(false)
+  const runSyncRef = useRef<() => Promise<boolean>>(async () => false)
+  const [sync, setSync] = useState<SyncStatus>(() => ({
+    configured: loadSyncConfig() != null,
+    syncing: false,
+    lastSyncAt: loadSyncMeta().lastSyncAt,
+    error: null,
+  }))
 
   const runAutoSave = useCallback(async (): Promise<boolean> => {
     const folder = folderRef.current
@@ -250,14 +287,156 @@ export function DataProvider({ children }: { children: ReactNode }) {
     scheduleRef.current = scheduleAutoSave
   }, [scheduleAutoSave])
 
+  const scheduleSync = useCallback((delay = SYNC_DELAY) => {
+    if (!loadSyncConfig()) return
+    if (syncTimer.current !== null) window.clearTimeout(syncTimer.current)
+    syncTimer.current = window.setTimeout(() => {
+      syncTimer.current = null
+      void runSyncRef.current()
+    }, delay)
+  }, [])
+
   const commit = useCallback(
     (next: AppData) => {
       dataRef.current = next
       setData(next)
       scheduleAutoSave()
+      scheduleSync()
     },
-    [scheduleAutoSave],
+    [scheduleAutoSave, scheduleSync],
   )
+
+  /** Pull the gist, merge with local data, save the result locally and upload it. */
+  const runSync = useCallback(async (): Promise<boolean> => {
+    const config = loadSyncConfig()
+    if (!config) return false
+    if (syncingRef.current) {
+      syncAgainRef.current = true
+      return false
+    }
+    syncingRef.current = true
+    setSync((current) => ({ ...current, syncing: true, error: null }))
+    try {
+      let gistId = config.gistId ?? (await findSyncGist(config.token))
+      const remoteRaw = gistId ? await readSyncGist(config.token, gistId) : null
+      const remote = remoteRaw ? await decryptPayload(remoteRaw, config.password) : null
+
+      const local = dataRef.current
+      const meta = loadSyncMeta()
+      const merged = mergeData(local, meta, remote)
+
+      if (fingerprint(merged.data) !== fingerprint(local)) {
+        await replaceAllData(merged.data)
+        dataRef.current = merged.data
+        setData(merged.data)
+        scheduleAutoSave()
+      }
+
+      const remoteUnchanged =
+        remote != null &&
+        fingerprint(remote.data) === fingerprint(merged.data) &&
+        (remote.tombstones ?? []).length === merged.tombstones.length &&
+        remote.settingsUpdatedAt === merged.settingsUpdatedAt
+      if (!remoteUnchanged) {
+        const payload: SyncPayload = {
+          app: 'PA Trading Journal',
+          format: 1,
+          syncedAt: nowIso(),
+          settingsUpdatedAt: merged.settingsUpdatedAt,
+          tombstones: merged.tombstones,
+          data: merged.data,
+        }
+        gistId = await writeSyncGist(
+          config.token,
+          gistId,
+          await encryptPayload(payload, config.password),
+        )
+      }
+      if (gistId !== config.gistId) saveSyncConfig({ ...config, gistId })
+
+      const lastSyncAt = nowIso()
+      saveSyncMeta({
+        settingsUpdatedAt: merged.settingsUpdatedAt,
+        tombstones: merged.tombstones,
+        lastSyncAt,
+      })
+      setSync({ configured: true, syncing: false, lastSyncAt, error: null })
+      return true
+    } catch (error) {
+      setSync((current) => ({
+        ...current,
+        syncing: false,
+        error: error instanceof Error ? error.message : 'Sync failed.',
+      }))
+      if (error instanceof WrongPasswordError) throw error
+      return false
+    } finally {
+      syncingRef.current = false
+      if (syncAgainRef.current) {
+        syncAgainRef.current = false
+        scheduleSync(1000)
+      }
+    }
+  }, [scheduleAutoSave, scheduleSync])
+
+  useEffect(() => {
+    runSyncRef.current = async () => {
+      try {
+        return await runSync()
+      } catch {
+        return false
+      }
+    }
+  }, [runSync])
+
+  // Sync when the app opens, when it comes back to the foreground, and every 2 minutes.
+  useEffect(() => {
+    if (loading || !sync.configured) return
+    scheduleSync(500)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') scheduleSync(300)
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('online', onVisible)
+    const interval = window.setInterval(() => scheduleSync(0), 120_000)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('online', onVisible)
+      window.clearInterval(interval)
+    }
+  }, [loading, sync.configured, scheduleSync])
+
+  const connectSync = useCallback(
+    async (token: string, password: string) => {
+      const cleanToken = token.trim()
+      if (!cleanToken) throw new Error('Paste your GitHub token first.')
+      if (password.length < 8) throw new Error('Use a sync password of at least 8 characters.')
+      const gistId = await findSyncGist(cleanToken)
+      if (gistId) {
+        // Check the password against existing data before saving anything.
+        const raw = await readSyncGist(cleanToken, gistId)
+        if (raw) await decryptPayload(raw, password)
+      }
+      saveSyncConfig({ token: cleanToken, password, gistId })
+      setSync((current) => ({ ...current, configured: true, error: null }))
+      await runSync()
+    },
+    [runSync],
+  )
+
+  const disconnectSync = useCallback(() => {
+    saveSyncConfig(null)
+    if (syncTimer.current !== null) window.clearTimeout(syncTimer.current)
+    setSync({ configured: false, syncing: false, lastSyncAt: null, error: null })
+  }, [])
+
+  const syncNow = useCallback(async () => {
+    try {
+      return await runSync()
+    } catch {
+      return false
+    }
+  }, [runSync])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -667,6 +846,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
       reconnectAutoBackupFolder,
       disconnectAutoBackupFolder,
       saveAutoBackupNow,
+      sync,
+      connectSync,
+      disconnectSync,
+      syncNow,
       unlocked,
       unlock,
       lockNow,
@@ -697,6 +880,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
       reconnectAutoBackupFolder,
       disconnectAutoBackupFolder,
       saveAutoBackupNow,
+      sync,
+      connectSync,
+      disconnectSync,
+      syncNow,
       unlocked,
       unlock,
       lockNow,
