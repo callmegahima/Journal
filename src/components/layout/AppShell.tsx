@@ -279,7 +279,7 @@ function Topbar({ onMenu }: { onMenu: () => void }) {
   const balanceUsd =
     data.settings.startingBalance + data.trades.reduce((sum, trade) => sum + trade.pnl, 0)
   const fxTitle = fx
-    ? `1 USD = ${formatRwf(fx.rate, 2)} ${LOCAL_CURRENCY}. Published ${new Date(fx.updatedAt).toLocaleString()} by ${fx.source}; checked ${new Date(fx.fetchedAt).toLocaleTimeString()}. Refreshes automatically every hour.${stale ? ' Last refresh failed; showing the saved rate.' : ''}`
+    ? `1 USD = ${formatRwf(fx.rate, 2)} ${LOCAL_CURRENCY}. Published ${new Date(fx.updatedAt).toLocaleString()} by ${fx.source}; checked ${new Date(fx.fetchedAt).toLocaleTimeString()}. Refreshes automatically every minute.${stale ? ' Last refresh failed; showing the saved rate.' : ''}`
     : 'Loading the USD/RWF exchange rate…'
   const activeInstrument =
     data.settings.instruments.find((item) => item.id === data.settings.activeInstrumentId) ??

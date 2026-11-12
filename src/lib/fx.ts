@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 
 /**
  * Live USD → local currency rate from free, key-less public sources (no personal data is
- * sent). Both publish a new rate about once a day; the app re-checks every hour, when the tab
+ * sent). Both publish a new rate about once a day; the app re-checks every minute, when the tab
  * becomes visible again and when the connection comes back. The last rate is kept in
  * localStorage so it still shows offline.
  */
@@ -17,7 +17,7 @@ export interface FxRate {
   source: string
 }
 
-const REFRESH_MS = 60 * 60 * 1000
+const REFRESH_MS = 60 * 1000
 const storageKey = (currency: string) => `pa-fx-usd-${currency.toLowerCase()}`
 
 function readCache(currency: string): FxRate | null {
