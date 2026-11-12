@@ -1,0 +1,8 @@
+# Second host for the journal (mirror of GitHub Pages), for networks that block github.io.
+# Supabase settings come from Netlify > Site configuration > Environment variables.
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
