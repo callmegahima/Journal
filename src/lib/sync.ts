@@ -1,3 +1,4 @@
+import { hydrateSettings } from '@/lib/defaults'
 import type { AppData, Settings } from '@/types'
 import { requireSupabase } from '@/lib/supabase'
 
@@ -190,12 +191,12 @@ export async function syncWithCloud(local: AppData): Promise<SyncResult> {
     !state.settingsDirty &&
     remoteSettings.updated_at > state.settingsUpdatedAt
   ) {
-    pulledSettings = {
+    pulledSettings = hydrateSettings({
       ...data.settings,
       ...remoteSettings.data,
       lock: data.settings.lock,
       autoLockMinutes: data.settings.autoLockMinutes,
-    }
+    })
     data = { ...data, settings: pulledSettings }
     state.settingsUpdatedAt = remoteSettings.updated_at
   }

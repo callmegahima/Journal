@@ -128,6 +128,8 @@ export interface Settings {
   leverage: number
   instruments: InstrumentSpec[]
   activeInstrumentId: string
+  /** Which batch of built-in markets has been added to `instruments` (so deleted ones stay deleted). */
+  instrumentPresetsVersion?: number
   setups: SetupDef[]
   checklistItems: ChecklistItemDef[]
   templates: ChecklistTemplate[]

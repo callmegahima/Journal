@@ -326,12 +326,10 @@ export function SettingsPage() {
         toast(`Maximum lot for ${instrument.symbol} cannot be below the minimum lot.`, 'error')
         return
       }
-      if (conversionKind(instrument) === 'cross' && !(instrument.conversionRate! > 0)) {
-        const pair = conversionPair(instrument)
+      // Crosses may be saved without a rate: each trade asks for the rate at close.
+      if (conversionKind(instrument) === 'cross' && !conversionPair(instrument)) {
         toast(
-          pair
-            ? `Enter the current ${pair.symbol} rate for ${instrument.symbol} so its profit can be converted to USD.`
-            : `${instrument.symbol}: quote currency ${quoteCurrencyOf(instrument)} is not supported yet.`,
+          `${instrument.symbol}: quote currency ${quoteCurrencyOf(instrument)} is not supported yet.`,
           'error',
         )
         return

@@ -336,6 +336,19 @@ export const INSTRUMENT_PRESETS: InstrumentPreset[] = [
   { group: 'Indices', spec: cfd('US500', 'S&P 500 (USD)', 1, 0.01), checkBroker: true },
 ]
 
+/** Bump when new built-in markets should be added to existing accounts. */
+export const INSTRUMENT_PRESETS_VERSION = 1
+
+/** A ready-to-use instrument from a preset. Gold keeps its original id so old trades still match. */
+export function presetInstrument(preset: InstrumentPreset): InstrumentSpec {
+  const { spec } = preset
+  return {
+    ...spec,
+    id: spec.symbol === XAUUSD_SPEC.symbol ? XAUUSD_SPEC.id : `inst-${spec.symbol.toLowerCase()}`,
+    tickValue: Math.round(spec.contractSize * spec.tickSize * 1e8) / 1e8,
+  }
+}
+
 export function buildDefaultSettings(): Settings {
   const setups = buildDefaultSetups()
   return {
@@ -350,8 +363,9 @@ export function buildDefaultSettings(): Settings {
     maxRiskPct: 2,
     minRR: 2,
     leverage: 100,
-    instruments: [XAUUSD_SPEC],
+    instruments: INSTRUMENT_PRESETS.map(presetInstrument),
     activeInstrumentId: XAUUSD_SPEC.id,
+    instrumentPresetsVersion: INSTRUMENT_PRESETS_VERSION,
     setups,
     checklistItems: CHECKLIST_ITEMS.map((i) => ({ ...i })),
     templates: buildDefaultTemplates(),
@@ -391,20 +405,31 @@ export function hydrateSettings(raw: Partial<Settings> | undefined): Settings {
     if (!mergedPlaybook.some((e) => e.setupId === entry.setupId)) mergedPlaybook.push(entry)
   }
 
+  let instruments =
+    Array.isArray(raw.instruments) && raw.instruments.length > 0
+      ? raw.instruments.map((inst) =>
+          inst.contractSize > 0 && inst.tickSize > 0
+            ? { ...inst, tickValue: Math.round(inst.contractSize * inst.tickSize * 1e8) / 1e8 }
+            : inst,
+        )
+      : defaults.instruments
+  // Add the built-in markets once; after that, ones the user deleted are not brought back.
+  if ((raw.instrumentPresetsVersion ?? 0) < INSTRUMENT_PRESETS_VERSION) {
+    const have = new Set(instruments.map((inst) => inst.symbol.trim().toUpperCase()))
+    instruments = [
+      ...instruments,
+      ...INSTRUMENT_PRESETS.filter((p) => !have.has(p.spec.symbol)).map(presetInstrument),
+    ]
+  }
+
   return {
     ...defaults,
     ...raw,
     version: SETTINGS_VERSION,
+    instrumentPresetsVersion: INSTRUMENT_PRESETS_VERSION,
     leverage:
       typeof raw.leverage === 'number' && raw.leverage > 0 ? raw.leverage : defaults.leverage,
-    instruments:
-      Array.isArray(raw.instruments) && raw.instruments.length > 0
-        ? raw.instruments.map((inst) =>
-            inst.contractSize > 0 && inst.tickSize > 0
-              ? { ...inst, tickValue: Math.round(inst.contractSize * inst.tickSize * 1e8) / 1e8 }
-              : inst,
-          )
-        : defaults.instruments,
+    instruments,
     checklistItems: mergedItems,
     setups: mergedSetups,
     templates: mergedTemplates,
