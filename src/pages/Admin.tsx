@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Ban,
+  Bell,
+  Check,
+  Clock3,
   Download,
   KeyRound,
   LogOut,
@@ -11,6 +14,7 @@ import {
   Trash2,
   UserCheck,
   Users,
+  X,
 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge, Button, Card, CardHeader, InfoNote } from '@/components/ui/primitives'
@@ -20,9 +24,16 @@ import { useAuth } from '@/store/AuthContext'
 import { useToast } from '@/store/ToastContext'
 import { adminApi, isSuspended, useIsAdmin, type AdminUser } from '@/lib/admin'
 import { money, moneySigned } from '@/lib/format'
+import { APPROVALS_CHANGED, desktopAlertsSupported } from '@/lib/approval'
 import { cn } from '@/lib/utils'
 
-type Filter = 'all' | 'active' | 'suspended' | 'unconfirmed' | 'admins'
+type Filter = 'all' | 'pending' | 'active' | 'suspended' | 'unconfirmed' | 'admins'
+
+function approvalOf(user: AdminUser): 'pending' | 'approved' | 'rejected' {
+  return user.approval_status === 'pending' || user.approval_status === 'rejected'
+    ? user.approval_status
+    : 'approved'
+}
 const DAY = 24 * 60 * 60 * 1000
 
 function when(value: string | null): string {
@@ -65,6 +76,9 @@ export function AdminPage() {
   const [busy, setBusy] = useState<string | null>(null)
   const [pending, setPending] = useState<PendingAction>(null)
   const [confirmText, setConfirmText] = useState('')
+  const [alerts, setAlerts] = useState<NotificationPermission | 'unsupported'>(() =>
+    desktopAlertsSupported() ? Notification.permission : 'unsupported',
+  )
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -90,6 +104,7 @@ export function AdminPage() {
       activeWeek: users.filter((u) => now - lastSeen(u) < 7 * DAY).length,
       suspended: users.filter(isSuspended).length,
       unconfirmed: users.filter((u) => !u.email_confirmed_at).length,
+      pending: users.filter((u) => approvalOf(u) === 'pending').length,
       trades: users.reduce((sum, u) => sum + u.trades, 0),
       plans: users.reduce((sum, u) => sum + u.plans, 0),
     }
@@ -99,6 +114,7 @@ export function AdminPage() {
     const q = query.trim().toLowerCase()
     return users.filter((u) => {
       if (q && !`${u.email ?? ''} ${u.full_name ?? ''}`.toLowerCase().includes(q)) return false
+      if (filter === 'pending') return approvalOf(u) !== 'approved'
       if (filter === 'active') return !isSuspended(u) && Date.now() - lastSeen(u) < 7 * DAY
       if (filter === 'suspended') return isSuspended(u)
       if (filter === 'unconfirmed') return !u.email_confirmed_at
@@ -113,6 +129,7 @@ export function AdminPage() {
       await action()
       toast(label, 'success')
       await load()
+      window.dispatchEvent(new Event(APPROVALS_CHANGED))
     } catch (err) {
       toast(err instanceof Error ? err.message : String(err), 'error')
     } finally {
@@ -157,6 +174,7 @@ export function AdminPage() {
 
   const filters: { id: Filter; label: string; count: number }[] = [
     { id: 'all', label: 'All', count: stats.total },
+    { id: 'pending', label: 'Waiting approval', count: stats.pending },
     { id: 'active', label: 'Active 7d', count: stats.activeWeek },
     { id: 'suspended', label: 'Suspended', count: stats.suspended },
     { id: 'unconfirmed', label: 'Unconfirmed', count: stats.unconfirmed },
@@ -168,9 +186,27 @@ export function AdminPage() {
       <PageHeader
         eyebrow="Admin"
         title="Traders on the app"
-        description="Every account, its sign-in details and summary numbers. You can suspend or restore logins, sign people out, confirm emails, send password resets and delete accounts. You cannot see anyone's password or the content of their plans and trades."
+        description="Every account, its sign-in details and summary numbers. New sign-ups wait here for your approval. You can suspend or restore logins, sign people out, confirm emails, send password resets and delete accounts. You cannot see anyone's password or the content of their plans and trades."
         actions={
           <>
+            {alerts === 'default' ? (
+              <Button
+                variant="ghost"
+                onClick={() =>
+                  void Notification.requestPermission().then((result) => {
+                    setAlerts(result)
+                    toast(
+                      result === 'granted'
+                        ? 'Desktop alerts on. You will be notified of new sign-ups while the app is open.'
+                        : 'Desktop alerts are blocked. You will still see alerts inside the app.',
+                      result === 'granted' ? 'success' : 'info',
+                    )
+                  })
+                }
+              >
+                <Bell size={14} /> Turn on sign-up alerts
+              </Button>
+            ) : null}
             <Button variant="ghost" onClick={exportCsv} disabled={users.length === 0}>
               <Download size={14} /> Export CSV
             </Button>
@@ -194,6 +230,61 @@ export function AdminPage() {
         <InfoNote tone="red" icon={<Ban size={12} />}>
           Could not load accounts: {error}
         </InfoNote>
+      ) : null}
+
+      {stats.pending > 0 ? (
+        <Card className="border-warn/40">
+          <CardHeader
+            title="Waiting for approval"
+            subtitle={`${stats.pending} new sign-up${stats.pending === 1 ? '' : 's'} cannot use the journal until you approve`}
+            icon={<Clock3 size={14} className="text-warn" />}
+          />
+          <div className="divide-y divide-line/70">
+            {users
+              .filter((u) => approvalOf(u) === 'pending')
+              .map((u) => (
+                <div key={u.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="truncate text-[13px] font-semibold text-fg">
+                        {u.full_name || u.email || 'No email'}
+                      </span>
+                      <Badge variant="slate">{u.provider === 'google' ? 'Google' : 'Email'}</Badge>
+                      {!u.email_confirmed_at ? <Badge variant="amber">Email not confirmed</Badge> : null}
+                    </div>
+                    {u.full_name && u.email ? (
+                      <div className="mt-0.5 truncate text-[11px] text-muted">{u.email}</div>
+                    ) : null}
+                    <div className="mt-0.5 text-[10px] text-dim" title={fullDate(u.approval_requested_at ?? u.created_at)}>
+                      Signed up {when(u.approval_requested_at ?? u.created_at)}
+                    </div>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="success"
+                      disabled={busy === u.id}
+                      onClick={() =>
+                        void run(u.id, `${u.email ?? 'Account'} approved.`, () => adminApi.setApproval(u.id, true))
+                      }
+                    >
+                      <Check size={13} /> Approve
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy === u.id}
+                      onClick={() =>
+                        void run(u.id, `${u.email ?? 'Account'} rejected.`, () => adminApi.setApproval(u.id, false))
+                      }
+                    >
+                      <X size={13} /> Reject
+                    </Button>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </Card>
       ) : null}
 
       <Card>
@@ -252,6 +343,11 @@ export function AdminPage() {
                         </span>
                         {self ? <Badge variant="blue">You</Badge> : null}
                         {u.is_admin ? <Badge variant="blue">Admin</Badge> : null}
+                        {approvalOf(u) === 'pending' ? (
+                          <Badge variant="amber">Waiting approval</Badge>
+                        ) : approvalOf(u) === 'rejected' ? (
+                          <Badge variant="red">Rejected</Badge>
+                        ) : null}
                         {suspended ? (
                           <Badge variant="red">Suspended</Badge>
                         ) : u.email_confirmed_at ? (
@@ -285,6 +381,30 @@ export function AdminPage() {
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-1.5">
+                    {!self && approvalOf(u) !== 'approved' ? (
+                      <Button
+                        size="sm"
+                        variant="success"
+                        disabled={busy === u.id}
+                        onClick={() =>
+                          void run(u.id, `${u.email ?? 'Account'} approved.`, () => adminApi.setApproval(u.id, true))
+                        }
+                      >
+                        <Check size={13} /> Approve
+                      </Button>
+                    ) : null}
+                    {!self && !u.is_admin && approvalOf(u) === 'pending' ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy === u.id}
+                        onClick={() =>
+                          void run(u.id, `${u.email ?? 'Account'} rejected.`, () => adminApi.setApproval(u.id, false))
+                        }
+                      >
+                        <X size={13} /> Reject
+                      </Button>
+                    ) : null}
                     {u.email ? (
                       <Button
                         size="sm"

@@ -4,6 +4,8 @@ import { AlertTriangle, Loader2, RotateCcw } from 'lucide-react'
 import { DataProvider, useData } from '@/store/DataContext'
 import { AuthProvider, useAuth } from '@/store/AuthContext'
 import { AuthScreens, SetNewPasswordScreen } from '@/components/auth/AuthScreens'
+import { PendingApprovalScreen } from '@/components/auth/PendingApproval'
+import { useApprovalStatus } from '@/lib/approval'
 import { LegacyImportBanner } from '@/components/settings/AccountCard'
 import { ToastProvider } from '@/store/ToastContext'
 import { AppShell } from '@/components/layout/AppShell'
@@ -230,8 +232,18 @@ function AccountGate() {
   if (loading) return <Splash label="Checking your sign-in" />
   if (recovering) return <SetNewPasswordScreen />
   if (!user) return <AuthScreens />
+  return <ApprovedGate key={user.id} userId={user.id} />
+}
+
+/** New accounts wait here until an admin approves them. */
+function ApprovedGate({ userId }: { userId: string }) {
+  const { status, recheck } = useApprovalStatus(userId)
+  if (status == null) return <Splash label="Checking your account" />
+  if (status !== 'approved') {
+    return <PendingApprovalScreen rejected={status === 'rejected'} onRecheck={recheck} />
+  }
   return (
-    <DataProvider key={user.id} userId={user.id}>
+    <DataProvider key={userId} userId={userId}>
       <HashRouter>
         <JournalApp />
       </HashRouter>

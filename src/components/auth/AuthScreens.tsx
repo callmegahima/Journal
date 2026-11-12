@@ -17,7 +17,7 @@ export function passwordProblem(password: string): string | null {
   return null
 }
 
-function Shell({ children, wide = false }: { children: ReactNode; wide?: boolean }) {
+export function AuthShell({ children, wide = false }: { children: ReactNode; wide?: boolean }) {
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-ink px-4 py-10">
       <div className="absolute right-4 top-4 z-10">
@@ -227,7 +227,7 @@ export function AuthScreens() {
 
   if (mode === 'privacy') {
     return (
-      <Shell wide>
+      <AuthShell wide>
         <div className="card p-5 sm:p-6">
           <button
             type="button"
@@ -238,13 +238,13 @@ export function AuthScreens() {
           </button>
           <PrivacyNotice />
         </div>
-      </Shell>
+      </AuthShell>
     )
   }
 
   if (mode === 'sent') {
     return (
-      <Shell>
+      <AuthShell>
         <div className="card space-y-3 p-5 text-center">
           <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-accent/10 text-accent-2">
             <Mail size={20} />
@@ -256,6 +256,9 @@ export function AuthScreens() {
               : 'If an account exists, we sent a password reset link to '}
             <span className="font-medium text-fg">{email.trim()}</span>. Open it on this device to
             continue. Check spam if it does not arrive within a few minutes.
+            {sentKind === 'confirm'
+              ? ' New accounts are then approved by the admin before the journal opens.'
+              : ''}
           </p>
           {error ? <Message tone="error">{error}</Message> : null}
           {info ? <Message tone="ok">{info}</Message> : null}
@@ -278,12 +281,12 @@ export function AuthScreens() {
             <ArrowLeft size={14} /> Back to sign in
           </Button>
         </div>
-      </Shell>
+      </AuthShell>
     )
   }
 
   return (
-    <Shell>
+    <AuthShell>
       <div className="card p-5 shadow-2xl shadow-black/30">
         {mode !== 'forgot' ? (
           <div className="mb-4 grid grid-cols-2 gap-1 rounded-lg border border-line bg-ink/50 p-1">
@@ -487,7 +490,7 @@ export function AuthScreens() {
           Privacy
         </button>
       </div>
-    </Shell>
+    </AuthShell>
   )
 }
 
@@ -519,7 +522,7 @@ export function SetNewPasswordScreen() {
   }
 
   return (
-    <Shell>
+    <AuthShell>
       <div className="card p-5">
         {done ? (
           <div className="space-y-3 text-center">
@@ -563,14 +566,14 @@ export function SetNewPasswordScreen() {
           </form>
         )}
       </div>
-    </Shell>
+    </AuthShell>
   )
 }
 
 /** Shown when the site was built without Supabase keys. */
 export function AccountsNotConfigured() {
   return (
-    <Shell>
+    <AuthShell>
       <div className="card space-y-2 p-5 text-center">
         <h2 className="text-sm font-semibold text-fg">Accounts are not set up yet</h2>
         <p className="text-[11px] leading-relaxed text-muted">
@@ -578,6 +581,6 @@ export function AccountsNotConfigured() {
           needs to add the Supabase project URL and public key, then redeploy.
         </p>
       </div>
-    </Shell>
+    </AuthShell>
   )
 }

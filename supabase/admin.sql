@@ -1,5 +1,6 @@
 -- My Trading Journal — admin dashboard
--- Run once in Supabase: Dashboard → SQL Editor → New query → paste → Run (after schema.sql).
+-- Run once in Supabase: Dashboard → SQL Editor → New query → paste → Run (after schema.sql),
+-- then run approvals.sql.
 --
 -- Security model:
 --   * Admins are listed in public.app_admins. Nobody can read or change that table through the
@@ -65,7 +66,9 @@ returns table (
   losses           integer,
   net_pnl          numeric,
   starting_balance numeric,
-  last_activity    timestamptz
+  last_activity    timestamptz,
+  approval_status  text,
+  approval_requested_at timestamptz
 )
 language plpgsql
 stable
@@ -91,7 +94,11 @@ begin
     coalesce(r.losses, 0)::integer,
     coalesce(r.net_pnl, 0)::numeric,
     nullif(s.data ->> 'startingBalance', '')::numeric,
-    greatest(r.last_activity, s.server_updated_at)
+    greatest(r.last_activity, s.server_updated_at),
+    -- From approvals.sql; accounts without a row (file not run yet) count as approved.
+    case when exists (select 1 from public.app_admins a where a.user_id = u.id) then 'approved'
+         else coalesce(ap.status, 'approved') end,
+    ap.requested_at
   from auth.users u
   left join lateral (
     select
@@ -105,6 +112,7 @@ begin
     where jr.user_id = u.id and not jr.deleted
   ) r on true
   left join public.journal_settings s on s.user_id = u.id
+  left join public.account_approvals ap on ap.user_id = u.id
   order by u.created_at desc;
 end;
 $$;

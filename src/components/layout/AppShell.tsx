@@ -19,6 +19,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Target,
+  UserPlus,
   X,
 } from 'lucide-react'
 import { Logo, LogoMark } from '@/components/Logo'
@@ -32,6 +33,8 @@ import { ProgressBar } from '@/components/ui/primitives'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { useUsdRate } from '@/lib/fx'
 import { useIsAdmin } from '@/lib/admin'
+import { usePendingSignups } from '@/lib/approval'
+import { useToast } from '@/store/ToastContext'
 
 const LOCAL_CURRENCY = 'RWF'
 
@@ -84,7 +87,13 @@ function useClock(tz: string) {
   return time
 }
 
-function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+function SidebarContent({
+  onNavigate,
+  pendingSignups = 0,
+}: {
+  onNavigate?: () => void
+  pendingSignups?: number
+}) {
   const { data, lockNow, sync, syncNow } = useData()
   const auth = useAuth()
   const isAdmin = useIsAdmin()
@@ -189,6 +198,14 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             >
               <ShieldCheck size={15} className="shrink-0 text-dim group-hover:text-muted" />
               Admin
+              {pendingSignups > 0 ? (
+                <span
+                  className="ml-auto rounded-full bg-warn px-1.5 py-0.5 font-mono text-[9px] font-semibold leading-none text-ink"
+                  title={`${pendingSignups} sign-up${pendingSignups === 1 ? '' : 's'} waiting for approval`}
+                >
+                  {pendingSignups}
+                </span>
+              ) : null}
             </NavLink>
           ) : null}
         </div>
@@ -290,7 +307,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   )
 }
 
-function Topbar({ onMenu }: { onMenu: () => void }) {
+function Topbar({ onMenu, pendingSignups }: { onMenu: () => void; pendingSignups: number }) {
   const { data } = useData()
   const location = useLocation()
   const navigate = useNavigate()
@@ -322,7 +339,12 @@ function Topbar({ onMenu }: { onMenu: () => void }) {
           className="rounded-lg p-1.5 text-muted transition hover:bg-panel-2 hover:text-fg lg:hidden"
           aria-label="Open navigation"
         >
-          <Menu size={19} />
+          <span className="relative block">
+            <Menu size={19} />
+            {pendingSignups > 0 ? (
+              <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-warn ring-2 ring-ink" />
+            ) : null}
+          </span>
         </button>
         <LogoMark size={24} />
         <div className="min-w-0">
@@ -376,6 +398,19 @@ function Topbar({ onMenu }: { onMenu: () => void }) {
             ) : null}
           </span>
         </div>
+        {pendingSignups > 0 ? (
+          <button
+            type="button"
+            onClick={() => navigate('/admin')}
+            className="relative flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-warn/40 bg-warn/10 px-2 text-[11px] font-medium text-warn transition hover:bg-warn/15"
+            title={`${pendingSignups} new sign-up${pendingSignups === 1 ? '' : 's'} waiting for your approval`}
+            aria-label={`${pendingSignups} sign-ups waiting for approval`}
+          >
+            <UserPlus size={14} />
+            <span className="font-mono">{pendingSignups}</span>
+            <span className="hidden md:inline">to approve</span>
+          </button>
+        ) : null}
         <ThemeToggle />
         <button
           type="button"
@@ -395,6 +430,16 @@ function Topbar({ onMenu }: { onMenu: () => void }) {
 export function AppShell({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const location = useLocation()
+  const isAdmin = useIsAdmin()
+  const { toast } = useToast()
+  const pendingSignups = usePendingSignups(isAdmin, (count, added) => {
+    toast(
+      added === count
+        ? `${count} new sign-up${count === 1 ? ' is' : 's are'} waiting for your approval. Open Admin to approve.`
+        : `${added} new sign-up${added === 1 ? '' : 's'} to approve (${count} waiting). Open Admin to approve.`,
+      'info',
+    )
+  })
 
   useEffect(() => {
     setMobileOpen(false)
@@ -412,7 +457,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen bg-ink">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-line bg-sidebar lg:block">
-        <SidebarContent />
+        <SidebarContent pendingSignups={pendingSignups} />
       </aside>
 
       {mobileOpen ? (
@@ -431,13 +476,13 @@ export function AppShell({ children }: { children: ReactNode }) {
             >
               <X size={18} />
             </button>
-            <SidebarContent onNavigate={() => setMobileOpen(false)} />
+            <SidebarContent onNavigate={() => setMobileOpen(false)} pendingSignups={pendingSignups} />
           </aside>
         </div>
       ) : null}
 
       <div className="lg:pl-64">
-        <Topbar onMenu={() => setMobileOpen(true)} />
+        <Topbar onMenu={() => setMobileOpen(true)} pendingSignups={pendingSignups} />
         <main
           className="mx-auto w-full max-w-[1560px] px-4 pb-20 pt-5 sm:px-6 lg:px-8"
           id="main-content"

@@ -24,6 +24,9 @@ export interface AdminUser {
   net_pnl: number
   starting_balance: number | null
   last_activity: string | null
+  /** 'pending' until an admin approves a new account (supabase/approvals.sql). */
+  approval_status?: 'pending' | 'approved' | 'rejected' | null
+  approval_requested_at?: string | null
 }
 
 export function isSuspended(user: Pick<AdminUser, 'banned_until'>): boolean {
@@ -50,6 +53,8 @@ export const adminApi = {
   signOutUser: (target: string) => call<void>('admin_sign_out_user', { target }),
   confirmEmail: (target: string) => call<void>('admin_confirm_email', { target }),
   deleteUser: (target: string) => call<void>('admin_delete_user', { target }),
+  setApproval: (target: string, approve: boolean) =>
+    call<void>('admin_set_approval', { target, approve }),
   /** Same email as "Forgot password", sent to that user. */
   sendPasswordReset: async (email: string) => {
     const { error } = await requireSupabase().auth.resetPasswordForEmail(email, {
