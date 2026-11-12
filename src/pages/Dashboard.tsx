@@ -189,7 +189,7 @@ export function DashboardPage() {
                   },
                   {
                     label: 'Write your first plan',
-                    detail: 'Run the PA + S&R checklist before risking anything.',
+                    detail: 'Run your strategy checklist before risking anything.',
                     to: '/plan?new=1',
                   },
                   {

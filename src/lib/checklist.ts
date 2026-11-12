@@ -233,3 +233,22 @@ export function summarizeChecklist(run: ChecklistRun): ChecklistSummary {
     overallPct: total > 0 ? Math.round((done / total) * 100) : 0,
   }
 }
+
+/** Section name, using the trader's own name when they renamed it. */
+export function groupLabelFor(
+  group: GroupScore['group'],
+  labels: Settings['groupLabels'] | undefined,
+): string {
+  return labels?.[group]?.trim() || CHECKLIST_GROUP_LABELS[group]
+}
+
+/** Shown when a plan or trade has no setup because the trader has none. */
+export const NO_SETUP = 'No setup'
+
+/** Setup names for a dropdown, keeping the current one even if it was deleted. */
+export function setupChoices(setups: Settings['setups'], current: string): string[] {
+  const names = setups.map((setup) => setup.name)
+  if (current && !names.includes(current)) names.unshift(current)
+  if (names.length === 0) names.push(NO_SETUP)
+  return names
+}

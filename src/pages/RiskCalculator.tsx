@@ -1102,7 +1102,7 @@ export function RiskCalculatorPage() {
                   <div className="text-[11px] leading-relaxed text-profit">
                     <p className="font-semibold text-profit">Risk numbers are within your rules.</p>
                     <p className="mt-0.5 text-muted">
-                      This does not mean the setup is valid. The PA + S&amp;R checklist and your own
+                      This does not mean the setup is valid. Your strategy checklist and your own
                       judgement still decide whether a trade exists.
                     </p>
                   </div>

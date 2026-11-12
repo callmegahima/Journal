@@ -18,7 +18,8 @@ import type {
   PlanStatus,
   Trade,
 } from '@/types'
-import { CHECKLIST_GROUP_LABELS, CHECKLIST_GROUP_ORDER } from '@/types'
+import { CHECKLIST_GROUP_ORDER } from '@/types'
+import { useGroupLabel } from '@/components/checklist/useGroupLabel'
 import { useData } from '@/store/DataContext'
 import { useToast } from '@/store/ToastContext'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -90,6 +91,7 @@ function RunDetail({
   onEditPlan: (plan: Plan) => void
 }) {
   const [imageOpen, setImageOpen] = useState(false)
+  const groupLabel = useGroupLabel()
   if (!run) return null
   const summary = summarizeChecklist(run)
 
@@ -167,7 +169,7 @@ function RunDetail({
             {run.scores.map((score) => (
               <div key={score.group} className="card p-3">
                 <div className="mb-1 flex items-center justify-between gap-2 text-[10px]">
-                  <span className="text-muted">{CHECKLIST_GROUP_LABELS[score.group]}</span>
+                  <span className="text-muted">{groupLabel(score.group)}</span>
                   <span className="font-mono text-dim">
                     {score.done}/{score.total} · {score.pct}%
                   </span>
@@ -191,7 +193,7 @@ function RunDetail({
               ).map((group) => (
                 <div key={group} className="px-3 py-2">
                   <div className="mb-1 px-1 text-[9px] font-semibold uppercase tracking-[0.08em] text-dim">
-                    {CHECKLIST_GROUP_LABELS[group]}
+                    {groupLabel(group)}
                   </div>
                   <div className="space-y-0.5">
                     {run.items
@@ -400,7 +402,7 @@ export function TradingPlanPage() {
       <PageHeader
         eyebrow="Trading Plan"
         title="Plan before the trade"
-        description={`Build a price action plan, run the full PA + support/resistance checklist and let the numerical risk rules decide READY, WAIT or NO TRADE. Times use ${timezoneShort(tz)}.`}
+        description={`Build a trade plan, run your strategy checklist and let the numerical risk rules decide READY, WAIT or NO TRADE. Times use ${timezoneShort(tz)}.`}
         actions={
           <>
             <Button variant="soft" onClick={() => setTab('history')}>

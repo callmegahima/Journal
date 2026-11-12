@@ -136,6 +136,10 @@ export interface Settings {
   checklistItems: ChecklistItemDef[]
   templates: ChecklistTemplate[]
   playbook: PlaybookEntry[]
+  /** Ids of built-in setups, checklist items and templates the trader deleted (never re-added). */
+  removedBuiltins?: string[]
+  /** The trader's own names for the checklist sections. */
+  groupLabels?: Partial<Record<ChecklistGroup, string>>
   lock: LockConfig
   autoLockMinutes: number
   onboardingDismissed: boolean

@@ -15,7 +15,7 @@ import type {
   Direction,
   GroupScore,
 } from '@/types'
-import { CHECKLIST_GROUP_LABELS } from '@/types'
+import { useGroupLabel } from '@/components/checklist/useGroupLabel'
 import { cn } from '@/lib/utils'
 import { ProgressBar } from '@/components/ui/primitives'
 import { Toggle } from '@/components/ui/primitives'
@@ -112,6 +112,7 @@ export function ChecklistPanel({
   chartScreenshot?: string
   onOpenScreenshot?: () => void
 }) {
+  const groupLabel = useGroupLabel()
   const styles = decisionStyles[decision]
   const DecisionIcon = styles.icon
   const groups = scores.map((score) => ({
@@ -132,7 +133,9 @@ export function ChecklistPanel({
         <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div>
             <h3 className="text-[13px] font-semibold text-fg">Strategy checklist</h3>
-            <p className="mt-0.5 text-[10px] text-dim">PA + support & resistance</p>
+            <p className="mt-0.5 text-[10px] text-dim">
+              {templates.find((template) => template.id === templateId)?.name ?? 'Custom checklist'}
+            </p>
           </div>
           <ScoreRing value={overallPct} />
         </div>
@@ -141,7 +144,7 @@ export function ChecklistPanel({
           {scores.map((score) => (
             <div key={score.group}>
               <div className="mb-1 flex items-center justify-between gap-2 text-[10px]">
-                <span className="truncate text-muted">{CHECKLIST_GROUP_LABELS[score.group]}</span>
+                <span className="truncate text-muted">{groupLabel(score.group)}</span>
                 <span className="shrink-0 font-mono text-dim">
                   {score.done}/{score.total}
                 </span>
@@ -247,7 +250,7 @@ export function ChecklistPanel({
             <div key={score.group} className="px-2 py-2">
               <div className="mb-1 flex items-center justify-between px-2 py-1">
                 <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted">
-                  {CHECKLIST_GROUP_LABELS[score.group]}
+                  {groupLabel(score.group)}
                 </span>
                 <span className="font-mono text-[9px] text-dim">
                   {score.done}/{score.total}

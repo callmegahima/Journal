@@ -393,27 +393,33 @@ export function hydrateSettings(raw: Partial<Settings> | undefined): Settings {
   const defaults = buildDefaultSettings()
   if (!raw) return defaults
 
+  // Built-ins the trader deleted stay deleted; any other missing built-in is added back.
+  const removed = new Set(Array.isArray(raw.removedBuiltins) ? raw.removedBuiltins : [])
+
   const savedItems = Array.isArray(raw.checklistItems) ? raw.checklistItems : []
   const mergedItems = [...savedItems]
   for (const item of defaults.checklistItems) {
-    if (!mergedItems.some((i) => i.id === item.id)) mergedItems.push(item)
+    if (!removed.has(item.id) && !mergedItems.some((i) => i.id === item.id)) mergedItems.push(item)
   }
 
   const savedSetups = Array.isArray(raw.setups) ? raw.setups : []
   const mergedSetups = [...savedSetups]
   for (const setup of defaults.setups) {
-    if (!mergedSetups.some((s) => s.id === setup.id)) mergedSetups.push(setup)
+    if (!removed.has(setup.id) && !mergedSetups.some((s) => s.id === setup.id)) mergedSetups.push(setup)
   }
 
   const savedTemplates = Array.isArray(raw.templates) ? raw.templates : []
   const mergedTemplates = [...savedTemplates]
   for (const tpl of defaults.templates) {
-    if (!mergedTemplates.some((t) => t.id === tpl.id)) mergedTemplates.push(tpl)
+    if (removed.has(tpl.id) || mergedTemplates.some((t) => t.id === tpl.id)) continue
+    // Leave out items the trader deleted.
+    mergedTemplates.push({ ...tpl, items: tpl.items.filter((entry) => !removed.has(entry.itemId)) })
   }
 
   const savedPlaybook = Array.isArray(raw.playbook) ? raw.playbook : []
   const mergedPlaybook = [...savedPlaybook]
   for (const entry of defaults.playbook) {
+    if (removed.has(entry.setupId)) continue
     if (!mergedPlaybook.some((e) => e.setupId === entry.setupId)) mergedPlaybook.push(entry)
   }
 
@@ -448,6 +454,8 @@ export function hydrateSettings(raw: Partial<Settings> | undefined): Settings {
     setups: mergedSetups,
     templates: mergedTemplates,
     playbook: mergedPlaybook,
+    removedBuiltins: [...removed],
+    groupLabels: raw.groupLabels && typeof raw.groupLabels === 'object' ? raw.groupLabels : {},
     lock: raw.lock ?? defaults.lock,
   }
 }
@@ -489,3 +497,30 @@ export const TRADE_REASONS = [
   'Recovering losses',
   'Testing an idea',
 ]
+
+/** Brings back every deleted built-in (edited or custom ones are left as they are). */
+export function restoreBuiltins(settings: Settings): Settings {
+  return hydrateSettings({ ...settings, removedBuiltins: [] })
+}
+
+/** Removes every built-in setup, checklist item and template so the trader can start their own. */
+export function clearBuiltins(settings: Settings): Settings {
+  const removed = new Set(settings.removedBuiltins ?? [])
+  const builtinItemIds = new Set(
+    settings.checklistItems.filter((item) => item.builtin).map((item) => item.id),
+  )
+  const builtinSetupIds = new Set(settings.setups.filter((s) => s.builtin).map((s) => s.id))
+  for (const item of settings.checklistItems) if (item.builtin) removed.add(item.id)
+  for (const setup of settings.setups) if (setup.builtin) removed.add(setup.id)
+  for (const tpl of settings.templates) if (tpl.builtin) removed.add(tpl.id)
+  return {
+    ...settings,
+    removedBuiltins: [...removed],
+    setups: settings.setups.filter((setup) => !setup.builtin),
+    checklistItems: settings.checklistItems.filter((item) => !item.builtin),
+    templates: settings.templates
+      .filter((tpl) => !tpl.builtin)
+      .map((tpl) => ({ ...tpl, items: tpl.items.filter((e) => !builtinItemIds.has(e.itemId)) })),
+    playbook: settings.playbook.filter((entry) => !builtinSetupIds.has(entry.setupId)),
+  }
+}

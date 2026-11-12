@@ -34,6 +34,7 @@ import {
   resultFromPnl,
   valuePerPriceUnit, conversionKind, conversionPair, quoteCurrencyOf } from '@/lib/calc'
 import { COMMON_MISTAKES } from '@/lib/defaults'
+import { NO_SETUP, setupChoices } from '@/lib/checklist'
 import { isoToLocalInput, localInputToIso, nowIso, timezoneShort } from '@/lib/dates'
 import { formatDuration, sessionForInstant } from '@/lib/metrics'
 import { cn, uid } from '@/lib/utils'
@@ -125,7 +126,7 @@ function makeDraft(
     conversionRate: plan?.conversionRate ?? null,
     riskAmount: plan?.riskAmount && plan.riskAmount > 0 ? plan.riskAmount : null,
     pnl: null,
-    setup: plan?.setup ?? activeSetups[0]?.name ?? settings.setups[0]?.name ?? '',
+    setup: plan?.setup ?? activeSetups[0]?.name ?? settings.setups[0]?.name ?? NO_SETUP,
     timeframe: plan?.timeframe ?? 'M15',
     session: plan?.session ?? suggestedSession(plan?.dateTime ?? nowIso()),
     reasonEntry: plan?.reasoning ?? '',
@@ -559,9 +560,9 @@ export function TradeForm({
                   value={draft.setup}
                   onChange={(event) => patch({ setup: event.target.value })}
                 >
-                  {settings.setups.map((setup) => (
-                    <option key={setup.id} value={setup.name}>
-                      {setup.name}
+                  {setupChoices(settings.setups, draft.setup).map((name) => (
+                    <option key={name} value={name}>
+                      {name}
                     </option>
                   ))}
                 </select>

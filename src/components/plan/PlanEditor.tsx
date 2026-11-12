@@ -45,6 +45,8 @@ import {
   pickTemplate,
   scoreChecklist,
   templateItemsForDirection,
+  setupChoices,
+  NO_SETUP,
 } from '@/lib/checklist'
 import {
   isoToLocalInput,
@@ -98,7 +100,7 @@ function makeInitialDraft(
 ): DraftState {
   const tz = settings.timezone
   const activeSetups = settings.setups.filter((setup) => setup.active)
-  const setup = plan?.setup ?? activeSetups[0]?.name ?? settings.setups[0]?.name ?? ''
+  const setup = plan?.setup ?? activeSetups[0]?.name ?? settings.setups[0]?.name ?? NO_SETUP
   const direction: Direction = plan?.direction ?? 'BUY'
   const template =
     (run?.templateId
@@ -661,12 +663,15 @@ export function PlanEditor({
                   value={draft.setup}
                   onChange={(event) => changeSetup(event.target.value)}
                 >
-                  {settings.setups.map((setup) => (
-                    <option key={setup.id} value={setup.name}>
-                      {setup.name}
-                      {setup.active ? '' : ' (inactive)'}
-                    </option>
-                  ))}
+                  {setupChoices(settings.setups, draft.setup).map((name) => {
+                    const setup = settings.setups.find((entry) => entry.name === name)
+                    return (
+                      <option key={name} value={name}>
+                        {name}
+                        {setup && !setup.active ? ' (inactive)' : ''}
+                      </option>
+                    )
+                  })}
                 </select>
               </div>
               <div>

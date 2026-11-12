@@ -8,10 +8,12 @@ import {
   ListChecks,
   Pencil,
   Plus,
+  RotateCcw,
   Save,
   Sparkles,
   Target,
   Trash2,
+  Wand2,
 } from 'lucide-react'
 import type {
   ChecklistGroup,
@@ -22,10 +24,10 @@ import type {
   SetupDef,
   TemplateItem,
 } from '@/types'
-import {
-  CHECKLIST_GROUP_LABELS,
-  CHECKLIST_GROUP_ORDER,
-} from '@/types'
+import { CHECKLIST_GROUP_LABELS, CHECKLIST_GROUP_ORDER } from '@/types'
+import type { Settings } from '@/types'
+import { useGroupLabel } from '@/components/checklist/useGroupLabel'
+import { clearBuiltins, restoreBuiltins } from '@/lib/defaults'
 import { useData } from '@/store/DataContext'
 import { useToast } from '@/store/ToastContext'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -66,6 +68,12 @@ function upsertById<T extends { id: string }>(list: T[], next: T): T[] {
   return list.some((item) => item.id === next.id)
     ? list.map((item) => (item.id === next.id ? next : item))
     : [...list, next]
+}
+
+/** Remembers a deleted built-in so it is not added back on the next load. */
+function rememberRemoved(settings: Settings, id: string, builtin: boolean): string[] | undefined {
+  if (!builtin) return settings.removedBuiltins
+  return Array.from(new Set([...(settings.removedBuiltins ?? []), id]))
 }
 
 function SetupForm({
@@ -220,6 +228,7 @@ function ItemForm({
   const [itemGroup, setItemGroup] = useState<ChecklistGroup>(item?.group ?? group ?? 'market')
   const [direction, setDirection] = useState<Direction | ''>(item?.direction ?? '')
   const [busy, setBusy] = useState(false)
+  const groupLabel = useGroupLabel()
 
   const save = async () => {
     if (!text.trim()) {
@@ -270,8 +279,8 @@ function ItemForm({
       <div className="space-y-3">
         {item?.builtin ? (
           <InfoNote tone="blue" icon={<Info size={12} />}>
-            This is a built-in item. You can edit the wording, but built-in items cannot be
-            deleted. Disable it in a template when you do not need it.
+            This is a built-in item. Change the wording to fit your strategy, or delete it if you
+            do not use it. Deleted built-ins can be brought back with Restore built-ins.
           </InfoNote>
         ) : null}
         <div>
@@ -297,7 +306,7 @@ function ItemForm({
             >
               {CHECKLIST_GROUP_ORDER.map((group) => (
                 <option key={group} value={group}>
-                  {CHECKLIST_GROUP_LABELS[group]}
+                  {groupLabel(group)}
                 </option>
               ))}
             </select>
@@ -365,6 +374,7 @@ function TemplateForm({
     template?.items ?? defaultTemplateItems(data.settings.checklistItems, 'BOTH'),
   )
   const [busy, setBusy] = useState(false)
+  const groupLabel = useGroupLabel()
 
   const itemMap = useMemo(
     () => new Map(data.settings.checklistItems.map((item) => [item.id, item])),
@@ -530,7 +540,7 @@ function TemplateForm({
                     <span
                       className={cn('text-[11px] font-semibold uppercase tracking-wider', GROUP_TONES[group])}
                     >
-                      {CHECKLIST_GROUP_LABELS[group]}
+                      {groupLabel(group)}
                     </span>
                     <span className="font-mono text-[9px] text-dim">
                       {groupEntries.filter((entry) => entry.enabled).length}/{groupEntries.length}
@@ -636,6 +646,11 @@ export function StrategyPage() {
   const [deleteItem, setDeleteItem] = useState<ChecklistItemDef | null>(null)
   const [deleteTemplate, setDeleteTemplate] = useState<ChecklistTemplate | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [confirmClear, setConfirmClear] = useState(false)
+  const [confirmRestore, setConfirmRestore] = useState(false)
+  const [renameGroup, setRenameGroup] = useState<ChecklistGroup | null>(null)
+  const [groupName, setGroupName] = useState('')
+  const groupLabel = useGroupLabel()
   const [playbookDraft, setPlaybookDraft] = useState<Record<string, { notes: string; customCriteria: string }>>(
     () =>
       Object.fromEntries(
@@ -695,6 +710,7 @@ export function StrategyPage() {
     try {
       await saveSettings((current) => ({
         ...current,
+        removedBuiltins: rememberRemoved(current, deleteSetup.id, deleteSetup.builtin),
         setups: current.setups.filter((setup) => setup.id !== deleteSetup.id),
         playbook: current.playbook.filter((entry) => entry.setupId !== deleteSetup.id),
       }))
@@ -713,6 +729,7 @@ export function StrategyPage() {
     try {
       await saveSettings((current) => ({
         ...current,
+        removedBuiltins: rememberRemoved(current, deleteItem.id, deleteItem.builtin),
         checklistItems: current.checklistItems.filter((item) => item.id !== deleteItem.id),
         templates: current.templates.map((template) => ({
           ...template,
@@ -734,6 +751,7 @@ export function StrategyPage() {
     try {
       await saveSettings((current) => ({
         ...current,
+        removedBuiltins: rememberRemoved(current, deleteTemplate.id, deleteTemplate.builtin),
         templates: current.templates.filter((template) => template.id !== deleteTemplate.id),
       }))
       toast('Template deleted. Saved checklist history is unchanged.', 'success')
@@ -742,6 +760,55 @@ export function StrategyPage() {
       toast('Could not delete the template.', 'error')
     } finally {
       setDeleting(false)
+    }
+  }
+
+  const builtinCount =
+    settings.setups.filter((setup) => setup.builtin).length +
+    settings.checklistItems.filter((item) => item.builtin).length +
+    settings.templates.filter((template) => template.builtin).length
+  const removedCount = settings.removedBuiltins?.length ?? 0
+
+  const handleClearBuiltins = async () => {
+    setDeleting(true)
+    try {
+      await saveSettings((current) => clearBuiltins(current))
+      toast('Built-in strategy removed. Add your own setups, checklist items and templates.', 'success')
+      setConfirmClear(false)
+    } catch {
+      toast('Could not remove the built-in strategy.', 'error')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const handleRestoreBuiltins = async () => {
+    setDeleting(true)
+    try {
+      await saveSettings((current) => restoreBuiltins(current))
+      toast('Built-in setups, checklist items and templates restored.', 'success')
+      setConfirmRestore(false)
+    } catch {
+      toast('Could not restore the built-ins.', 'error')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const saveGroupName = async () => {
+    if (!renameGroup) return
+    const name = groupName.trim()
+    try {
+      await saveSettings((current) => {
+        const labels = { ...(current.groupLabels ?? {}) }
+        if (!name || name === CHECKLIST_GROUP_LABELS[renameGroup]) delete labels[renameGroup]
+        else labels[renameGroup] = name
+        return { ...current, groupLabels: labels }
+      })
+      toast('Section renamed.', 'success')
+      setRenameGroup(null)
+    } catch {
+      toast('Could not rename the section.', 'error')
     }
   }
 
@@ -850,6 +917,30 @@ export function StrategyPage() {
           </Card>
         ))}
       </div>
+
+      <Card className="flex flex-wrap items-center gap-3 px-4 py-3">
+        <Wand2 size={16} className="shrink-0 text-accent-2" />
+        <div className="min-w-[200px] flex-1">
+          <div className="text-[12px] font-semibold text-fg">Use your own strategy</div>
+          <p className="text-[10px] leading-relaxed text-dim">
+            Everything here can be edited or deleted, including the built-in price action + S&amp;R
+            strategy. Start from a clean slate, then add your own setups, checklist items and
+            templates.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {builtinCount > 0 ? (
+            <Button size="sm" variant="soft" onClick={() => setConfirmClear(true)}>
+              <Trash2 size={12} /> Remove built-ins
+            </Button>
+          ) : null}
+          {removedCount > 0 ? (
+            <Button size="sm" variant="ghost" onClick={() => setConfirmRestore(true)}>
+              <RotateCcw size={12} /> Restore built-ins
+            </Button>
+          ) : null}
+        </div>
+      </Card>
 
       <div className="flex flex-wrap items-end justify-between gap-3">
         <Tabs
@@ -962,12 +1053,11 @@ export function StrategyPage() {
                   <Button
                     size="sm"
                     variant="ghost"
-                    disabled={setup.builtin}
                     onClick={() => setDeleteSetup(setup)}
                     aria-label="Delete setup"
-                    title={setup.builtin ? 'Built-in setups cannot be deleted' : 'Delete setup'}
+                    title="Delete setup"
                   >
-                    <Trash2 size={13} className={setup.builtin ? 'text-dim' : 'text-loss/80'} />
+                    <Trash2 size={13} className="text-loss/80" />
                   </Button>
                 </div>
               </Card>
@@ -976,8 +1066,12 @@ export function StrategyPage() {
         ) : (
           <EmptyState
             icon={<Target size={20} />}
-            title="No setups match your search"
-            description="Clear the search or add a new setup with explicit entry criteria and invalidation."
+            title={query ? 'No setups match your search' : 'No setups yet'}
+            description={
+              query
+                ? 'Clear the search or add a new setup with explicit entry criteria and invalidation.'
+                : 'Add the setups you trade, with clear entry criteria and invalidation.'
+            }
             action={
               <Button
                 variant="primary"
@@ -994,24 +1088,44 @@ export function StrategyPage() {
       ) : null}
 
       {tab === 'items' ? (
-        filteredItems.length > 0 ? (
+        filteredItems.length > 0 || !query ? (
           <div className="space-y-3">
             {CHECKLIST_GROUP_ORDER.map((group) => {
               const groupItems = filteredItems.filter((item) => item.group === group)
-              if (groupItems.length === 0) return null
+              if (groupItems.length === 0 && query) return null
               return (
                 <Card key={group}>
                   <CardHeader
-                    title={CHECKLIST_GROUP_LABELS[group]}
+                    title={groupLabel(group)}
                     subtitle={`${groupItems.length} item${groupItems.length === 1 ? '' : 's'} available to templates`}
                     icon={<ListChecks size={14} />}
                     action={
-                      <Button size="sm" variant="soft" onClick={() => setItemForm({ group })}>
-                        <Plus size={12} /> Add
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            setGroupName(groupLabel(group))
+                            setRenameGroup(group)
+                          }}
+                          aria-label={`Rename ${groupLabel(group)}`}
+                          title="Rename section"
+                        >
+                          <Pencil size={12} />
+                        </Button>
+                        <Button size="sm" variant="soft" onClick={() => setItemForm({ group })}>
+                          <Plus size={12} /> Add
+                        </Button>
+                      </div>
                     }
                   />
                   <div className="divide-y divide-line/60">
+                    {groupItems.length === 0 ? (
+                      <p className="px-4 py-3 text-[10px] text-dim">
+                        No items in this section. Add your own, or rename the section to fit your
+                        strategy.
+                      </p>
+                    ) : null}
                     {groupItems.map((item) => (
                       <div key={item.id} className="flex items-start gap-3 px-4 py-2.5">
                         <div className="min-w-0 flex-1">
@@ -1040,16 +1154,11 @@ export function StrategyPage() {
                           <Button
                             size="sm"
                             variant="ghost"
-                            disabled={item.builtin}
                             onClick={() => setDeleteItem(item)}
                             aria-label="Delete checklist item"
-                            title={
-                              item.builtin
-                                ? 'Built-in items cannot be deleted — disable them in a template'
-                                : 'Delete checklist item'
-                            }
+                            title="Delete checklist item"
                           >
-                            <Trash2 size={13} className={item.builtin ? 'text-dim' : 'text-loss/80'} />
+                            <Trash2 size={13} className="text-loss/80" />
                           </Button>
                         </div>
                       </div>
@@ -1134,7 +1243,7 @@ export function StrategyPage() {
                         key={group}
                         className="rounded bg-panel-2 px-1.5 py-0.5 text-[9px] text-muted"
                       >
-                        {CHECKLIST_GROUP_LABELS[group]}
+                        {groupLabel(group)}
                       </span>
                     ))}
                   </div>
@@ -1159,19 +1268,11 @@ export function StrategyPage() {
                     <Button
                       size="sm"
                       variant="ghost"
-                      disabled={template.builtin}
                       onClick={() => setDeleteTemplate(template)}
                       aria-label="Delete template"
-                      title={
-                        template.builtin
-                          ? 'Built-in templates cannot be deleted'
-                          : 'Delete template'
-                      }
+                      title="Delete template"
                     >
-                      <Trash2
-                        size={13}
-                        className={template.builtin ? 'text-dim' : 'text-loss/80'}
-                      />
+                      <Trash2 size={13} className="text-loss/80" />
                     </Button>
                   </div>
                 </Card>
@@ -1181,8 +1282,8 @@ export function StrategyPage() {
         ) : (
           <EmptyState
             icon={<Sparkles size={20} />}
-            title="No templates match your search"
-            description="Templates decide which checklist conditions appear and which ones are mandatory."
+            title={query ? 'No templates match your search' : 'No templates yet'}
+            description="Templates decide which checklist conditions appear and which ones are mandatory. Add checklist items first, then build a template from them."
             action={
               <Button
                 variant="primary"
@@ -1299,7 +1400,11 @@ export function StrategyPage() {
         onClose={() => setDeleteSetup(null)}
         busy={deleting}
         title="Delete this setup?"
-        description="The setup and its playbook note will be removed from your strategy library. Existing plans, trades and checklist history keep the setup name. This cannot be undone."
+        description={
+          deleteSetup?.builtin
+            ? 'The setup and its playbook note will be removed. Existing plans, trades and checklist history keep the setup name. You can bring built-ins back later with Restore built-ins.'
+            : 'The setup and its playbook note will be removed from your strategy library. Existing plans, trades and checklist history keep the setup name. This cannot be undone.'
+        }
         confirmLabel="Delete setup"
         onConfirm={handleDeleteSetup}
       />
@@ -1308,7 +1413,11 @@ export function StrategyPage() {
         onClose={() => setDeleteItem(null)}
         busy={deleting}
         title="Delete this checklist item?"
-        description="The item is removed from your library and from every template. Saved checklist snapshots keep their original wording. This cannot be undone."
+        description={
+          deleteItem?.builtin
+            ? 'The item is removed from your library and from every template. Saved checklist snapshots keep their original wording. You can bring built-ins back later with Restore built-ins.'
+            : 'The item is removed from your library and from every template. Saved checklist snapshots keep their original wording. This cannot be undone.'
+        }
         confirmLabel="Delete item"
         onConfirm={handleDeleteItem}
       />
@@ -1317,10 +1426,70 @@ export function StrategyPage() {
         onClose={() => setDeleteTemplate(null)}
         busy={deleting}
         title="Delete this template?"
-        description="The template disappears from the plan editor. Saved checklist history and linked plans are unchanged. This cannot be undone."
+        description={
+          deleteTemplate?.builtin
+            ? 'The template disappears from the plan editor. Saved checklist history and linked plans are unchanged. You can bring built-ins back later with Restore built-ins.'
+            : 'The template disappears from the plan editor. Saved checklist history and linked plans are unchanged. This cannot be undone.'
+        }
         confirmLabel="Delete template"
         onConfirm={handleDeleteTemplate}
       />
+      <ConfirmDialog
+        open={confirmClear}
+        onClose={() => setConfirmClear(false)}
+        busy={deleting}
+        title="Remove the built-in strategy?"
+        description={`This removes all ${builtinCount} built-in setups, checklist items and templates so you can build your own. Setups, items and templates you created stay. Saved plans, trades and checklist history are unchanged, and you can bring the built-ins back with Restore built-ins.`}
+        confirmLabel="Remove built-ins"
+        onConfirm={handleClearBuiltins}
+      />
+      <ConfirmDialog
+        open={confirmRestore}
+        onClose={() => setConfirmRestore(false)}
+        busy={deleting}
+        title="Restore the built-ins?"
+        description={`This adds back the ${removedCount} built-in setups, checklist items and templates you deleted. Your own ones, and built-ins you edited, stay as they are.`}
+        confirmLabel="Restore built-ins"
+        onConfirm={handleRestoreBuiltins}
+      />
+      <Modal
+        open={Boolean(renameGroup)}
+        onClose={() => setRenameGroup(null)}
+        size="sm"
+        title="Rename section"
+        description="Name this checklist section to match your strategy. Leave it empty to use the original name."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setRenameGroup(null)}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={() => void saveGroupName()}>
+              <Save size={14} /> Save name
+            </Button>
+          </>
+        }
+      >
+        <label className="label" htmlFor="group-name">
+          Section name
+        </label>
+        <input
+          id="group-name"
+          className="input"
+          value={groupName}
+          maxLength={40}
+          onChange={(event) => setGroupName(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') void saveGroupName()
+          }}
+          placeholder={renameGroup ? CHECKLIST_GROUP_LABELS[renameGroup] : ''}
+          autoFocus
+        />
+        {renameGroup === 'buy' || renameGroup === 'sell' ? (
+          <p className="mt-2 text-[10px] text-dim">
+            Items in this section only show on {renameGroup === 'buy' ? 'BUY' : 'SELL'} plans.
+          </p>
+        ) : null}
+      </Modal>
     </div>
   )
 }
