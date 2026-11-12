@@ -7,6 +7,7 @@ import {
   Brain,
   CalendarDays,
   Calculator,
+  Gauge,
   ClipboardList,
   LayoutDashboard,
   Lock,
@@ -50,6 +51,7 @@ const GROUPS: { label: string; items: NavItem[] }[] = [
     items: [
       { to: '/strategy', label: 'Strategy & Setups', icon: Target },
       { to: '/risk', label: 'Risk Calculator', icon: Calculator },
+      { to: '/margin', label: 'Margin Calculator', icon: Gauge },
       { to: '/psychology', label: 'Psychology', icon: Brain },
       { to: '/analytics', label: 'Analytics & Reports', icon: BarChart3 },
     ],
