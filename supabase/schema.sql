@@ -83,6 +83,8 @@ create policy "own settings: delete" on public.journal_settings
 -- Anonymous (signed-out) visitors get nothing.
 revoke all on public.journal_records  from anon;
 revoke all on public.journal_settings from anon;
+grant select, insert, update, delete on public.journal_records  to authenticated;
+grant select, insert, update, delete on public.journal_settings to authenticated;
 
 -- ---------------------------------------------------------------- delete my account
 -- Lets a signed-in user permanently delete their own account and, through the
