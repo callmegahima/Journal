@@ -340,13 +340,15 @@ export function JournalPage() {
                       <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono text-[10px]">
                         <span className="text-dim">E {price(trade.entry, 2)}</span>
                         <span className="text-dim">X {price(trade.exit, 2)}</span>
-                        <span className="text-dim">SL {price(trade.sl, 2)}</span>
+                        <span className="text-dim">SL {trade.sl ? price(trade.sl, 2) : '—'}</span>
                         <span className="text-dim">TP {price(trade.tp, 2)}</span>
                       </div>
                     </td>
                     <td>
                       <div className="font-mono text-[11px] text-fg">{formatLots(trade.lots)} lots</div>
-                      <div className="text-[9px] text-dim">{money(trade.riskAmount)} risk</div>
+                      <div className="text-[9px] text-dim">
+                        {trade.riskAmount > 0 ? `${money(trade.riskAmount)} risk` : 'no stop'}
+                      </div>
                     </td>
                     <td className="text-right">
                       <div
@@ -371,7 +373,7 @@ export function JournalPage() {
                               : 'text-dim',
                         )}
                       >
-                        {rMultiple(trade.rMultiple)}
+                        {trade.riskAmount > 0 ? rMultiple(trade.rMultiple) : '—'}
                       </div>
                     </td>
                     <td>

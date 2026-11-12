@@ -171,9 +171,11 @@ export interface Trade {
   direction: Direction
   entry: number
   exit: number
-  sl: number
+  /** Stop loss — optional; null when the trade had no stop. */
+  sl: number | null
   tp: number | null
   lots: number
+  /** 0 when the trade had no stop loss and no manual risk — R stats skip it. */
   riskAmount: number
   /** MT5 "Profit" column (price result before costs). */
   grossPnl?: number

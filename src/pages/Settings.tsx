@@ -259,7 +259,11 @@ export function SettingsPage() {
         lots: trade.lots,
         spec,
       }).gross
-      const riskAmount = calculateTradeRisk(trade.entry, trade.sl, trade.lots, spec)
+      // Keep a manually entered risk for trades without a stop loss.
+      const riskAmount =
+        trade.sl != null && trade.sl > 0
+          ? calculateTradeRisk(trade.entry, trade.sl, trade.lots, spec)
+          : trade.riskAmount
       const rMultiple = riskAmount > 0 ? roundTo(pnl / riskAmount, 2) : 0
       if (pnl === trade.pnl && riskAmount === trade.riskAmount) continue
       await saveTrade({ ...trade, grossPnl, pnl, result, riskAmount, rMultiple })

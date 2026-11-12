@@ -1166,8 +1166,11 @@ export function RiskCalculatorPage() {
               Average R:{' '}
               <span className="font-mono text-muted">
                 {rMultiple(
-                  trades.length > 0
-                    ? trades.reduce((sum, trade) => sum + trade.rMultiple, 0) / trades.length
+                  trades.some((trade) => trade.riskAmount > 0)
+                    ? trades
+                        .filter((trade) => trade.riskAmount > 0)
+                        .reduce((sum, trade) => sum + trade.rMultiple, 0) /
+                        trades.filter((trade) => trade.riskAmount > 0).length
                     : null,
                 )}
               </span>

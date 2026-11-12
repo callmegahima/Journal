@@ -65,7 +65,7 @@ export function tradesToCsv(trades: Trade[], settings: Settings, tz: string): st
         trade.swap ?? 0,
         trade.pnl,
         trade.result,
-        trade.rMultiple,
+        trade.riskAmount > 0 ? trade.rMultiple : '',
         plannedRR(trade.entry, trade.sl, trade.tp).toFixed(2),
         trade.setup,
         trade.timeframe,

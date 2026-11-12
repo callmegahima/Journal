@@ -284,9 +284,7 @@ export function TradeForm({
     if (!draft.setup) missing.push('setup')
     if (draft.entry == null || draft.entry <= 0) missing.push('entry price')
     if (draft.exit == null || draft.exit <= 0) missing.push('exit price')
-    if (draft.sl == null || draft.sl <= 0) missing.push('stop loss')
     if (draft.lots == null || draft.lots <= 0) missing.push('lot size')
-    if (effectiveRisk <= 0) missing.push('risk amount')
     if (missing.length > 0) {
       toast(`Complete these fields first: ${missing.join(', ')}.`, 'error')
       return
@@ -314,10 +312,10 @@ export function TradeForm({
       direction: draft.direction,
       entry: draft.entry ?? 0,
       exit: draft.exit ?? 0,
-      sl: draft.sl ?? 0,
+      sl: draft.sl != null && draft.sl > 0 ? draft.sl : null,
       tp: draft.tp,
       lots: draft.lots ?? 0,
-      riskAmount: effectiveRisk,
+      riskAmount: Math.max(0, effectiveRisk),
       grossPnl: calculatedPnl.gross,
       commission: draft.commission ?? 0,
       swap: draft.swap ?? 0,
@@ -402,7 +400,7 @@ export function TradeForm({
                   {effectivePnl >= 0 ? '+' : ''}
                   {money(effectivePnl)}
                 </span>
-                <span className="font-mono text-[10px] text-dim">{rMultiple(rValue)}</span>
+                <span className="font-mono text-[10px] text-dim">{effectiveRisk > 0 ? rMultiple(rValue) : '—'}</span>
               </>
             ) : (
               <span className="text-[10px] text-dim">Enter entry & exit to calculate P/L</span>
@@ -594,16 +592,20 @@ export function TradeForm({
                 suffix="USD"
               />
               <NumberField
-                label="Stop Loss"
+                label="Stop Loss (optional)"
                 value={draft.sl}
                 onChange={(value) => patch({ sl: value })}
                 suffix="USD"
+                placeholder="None"
+                hint="Leave empty if the trade had no stop."
               />
               <NumberField
-                label="Take Profit"
+                label="Take Profit (optional)"
                 value={draft.tp}
                 onChange={(value) => patch({ tp: value })}
                 suffix="USD"
+                placeholder="None"
+                hint="Leave empty if the trade had no target."
               />
               <NumberField
                 label="Lot size (volume)"
@@ -627,10 +629,13 @@ export function TradeForm({
                   patch({ riskAmount: value })
                 }}
                 suffix="USD"
+                placeholder={draft.sl == null ? 'No stop — optional' : '0.00'}
                 hint={
                   riskTouched
                     ? 'Manual risk amount — used for the R multiple.'
-                    : `Auto: SL distance × ${instrument ? valuePerPriceUnit(instrument) : '—'} (contract size) × lots.`
+                    : draft.sl == null
+                      ? 'Optional. Without a stop or a risk amount, R stats skip this trade.'
+                      : `Auto: SL distance × ${instrument ? valuePerPriceUnit(instrument) : '—'} (contract size) × lots.`
                 }
               />
               <NumberField
@@ -771,7 +776,7 @@ export function TradeForm({
                     rValue > 0 ? 'text-profit' : rValue < 0 ? 'text-loss' : 'text-fg',
                   )}
                 >
-                  {rMultiple(rValue)}
+                  {effectiveRisk > 0 ? rMultiple(rValue) : '—'}
                 </div>
               </div>
               <div className="rounded-lg border border-line/80 bg-ink/40 px-2.5 py-2">

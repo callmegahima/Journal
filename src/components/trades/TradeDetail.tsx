@@ -133,10 +133,14 @@ export function TradeDetail({
             />
             <Metric
               label="R multiple"
-              value={rMultiple(trade.rMultiple)}
+              value={trade.riskAmount > 0 ? rMultiple(trade.rMultiple) : '—'}
               tone={trade.rMultiple > 0 ? 'profit' : trade.rMultiple < 0 ? 'loss' : 'default'}
             />
-            <Metric label="Risk" value={money(trade.riskAmount)} hint={riskPct == null ? undefined : pct(riskPct, 2)} />
+            <Metric
+              label="Risk"
+              value={trade.riskAmount > 0 ? money(trade.riskAmount) : 'No stop'}
+              hint={trade.riskAmount > 0 && riskPct != null ? pct(riskPct, 2) : undefined}
+            />
             <Metric label="Lot size" value={formatLots(trade.lots)} />
             <Metric
               label="Planned R:R"
@@ -158,8 +162,8 @@ export function TradeDetail({
                 {[
                   ['Entry', price(trade.entry, 2)],
                   ['Exit', price(trade.exit, 2)],
-                  ['Stop Loss', price(trade.sl, 2)],
-                  ['Take Profit', price(trade.tp, 2)],
+                  ['Stop Loss', trade.sl ? price(trade.sl, 2) : 'None'],
+                  ['Take Profit', trade.tp ? price(trade.tp, 2) : 'None'],
                   ['Lots', formatLots(trade.lots)],
                   ['Points', String(Math.round((trade.direction === 'BUY' ? trade.exit - trade.entry : trade.entry - trade.exit) / (instrument?.tickSize || 0.01)))],
                   ['MT5 profit', money(trade.grossPnl ?? trade.pnl - (trade.commission ?? 0) - (trade.swap ?? 0))],

@@ -101,6 +101,15 @@ export interface Metrics {
   equity: EquityPoint[]
 }
 
+/** A trade has a measurable R only when it had a defined risk (stop loss or manual risk). */
+export function hasRisk(trade: Trade): boolean {
+  return trade.riskAmount > 0
+}
+
+function rValues(trades: Trade[]): number[] {
+  return trades.filter(hasRisk).map((t) => t.rMultiple)
+}
+
 export function sortTradesChronologically(trades: Trade[]): Trade[] {
   return [...trades].sort((a, b) => a.date.localeCompare(b.date))
 }
@@ -219,11 +228,13 @@ export function computeMetrics(trades: Trade[], startingBalance: number, tz: str
 
   const avgWinValue = average(winsList.map((t) => t.pnl))
   const avgLossValue = average(lossesList.map((t) => t.pnl))
-  const winR = average(sorted.filter((t) => t.result === 'Win').map((t) => t.rMultiple))
-  const lossR = average(sorted.filter((t) => t.result === 'Loss').map((t) => t.rMultiple))
+  const withRisk = sorted.filter(hasRisk)
+  const winR = average(rValues(withRisk.filter((t) => t.result === 'Win')))
+  const lossR = average(rValues(withRisk.filter((t) => t.result === 'Loss')))
   const expectancyR =
-    count > 0
-      ? (wins / count) * (winR ?? 0) + (losses / count) * (lossR ?? 0)
+    withRisk.length > 0
+      ? (withRisk.filter((t) => t.result === 'Win').length / withRisk.length) * (winR ?? 0) +
+        (withRisk.filter((t) => t.result === 'Loss').length / withRisk.length) * (lossR ?? 0)
       : null
 
   return {
@@ -245,7 +256,7 @@ export function computeMetrics(trades: Trade[], startingBalance: number, tz: str
     largestWin: winsList.length > 0 ? Math.max(...winsList.map((t) => t.pnl)) : null,
     largestLoss: lossesList.length > 0 ? Math.min(...lossesList.map((t) => t.pnl)) : null,
     avgPlannedRR: average(rrValues),
-    avgR: average(sorted.map((t) => t.rMultiple)),
+    avgR: average(rValues(sorted)),
     expectancy: count > 0 ? netPnl / count : null,
     maxDrawdown: roundTo(maxDrawdown, 2),
     maxDrawdownPct,
@@ -340,7 +351,7 @@ export function groupStats(trades: Trade[], keyFn: (trade: Trade) => string): Gr
         losses,
         net: roundTo(list.reduce((sum, t) => sum + t.pnl, 0), 2),
         winRate: wins + losses > 0 ? (wins / (wins + losses)) * 100 : null,
-        avgR: average(list.map((t) => t.rMultiple)),
+        avgR: average(rValues(list)),
       }
     })
     .sort((a, b) => b.net - a.net)
@@ -415,7 +426,7 @@ export function rDistribution(trades: Trade[]): RDistributionPoint[] {
   ]
   return bins.map((bin) => ({
     range: bin.range,
-    count: trades.filter((t) => bin.test(t.rMultiple)).length,
+    count: trades.filter((t) => hasRisk(t) && bin.test(t.rMultiple)).length,
   }))
 }
 
@@ -556,7 +567,7 @@ function qualitySummary(list: LinkedChecklist[]) {
     count: trades.length,
     avgPnl: average(trades.map((t) => t.pnl)),
     winRate: wins + losses > 0 ? (wins / (wins + losses)) * 100 : null,
-    avgR: average(trades.map((t) => t.rMultiple)),
+    avgR: average(rValues(trades)),
   }
 }
 
