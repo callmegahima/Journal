@@ -1,21 +1,14 @@
 import type { AppData, Settings } from '@/types'
+import { requireSupabase } from '@/lib/supabase'
 
 /**
- * Cross-device sync through one secret GitHub Gist.
+ * Account sync with Supabase.
  *
- * - The whole journal is encrypted on the device (AES-GCM, key from the sync password via
- *   PBKDF2) before upload, so the gist only ever holds ciphertext.
- * - Each record is merged by id; the copy with the newer `updatedAt` wins.
- * - Deletions are kept as tombstones so a record deleted on one device is not brought back
- *   by the other.
- * - The passcode lock stays per device and is never synced.
+ * The journal stays local-first (IndexedDB, one database per signed-in user). Every local
+ * change is noted here as "dirty"; a sync pushes dirty records to the user's rows and pulls
+ * anything changed on their other devices. Each record keeps the copy with the newer
+ * `updatedAt`. Row Level Security on the server limits every query to the signed-in user.
  */
-
-export const SYNC_FILENAME = 'pa-trading-journal.sync.json'
-const CONFIG_KEY = 'pa-journal-sync-config'
-const META_KEY = 'pa-journal-sync-meta'
-const PBKDF2_ITERATIONS = 250_000
-const TOMBSTONE_TTL_DAYS = 120
 
 export type SyncCollection = 'plans' | 'trades' | 'checklists' | 'psych' | 'events' | 'reflections'
 export const SYNC_COLLECTIONS: SyncCollection[] = [
@@ -27,347 +20,351 @@ export const SYNC_COLLECTIONS: SyncCollection[] = [
   'reflections',
 ]
 
-export interface SyncConfig {
-  token: string
-  password: string
-  gistId: string | null
-}
-
-export interface Tombstone {
-  collection: SyncCollection
-  id: string
-  deletedAt: string
-}
-
-/** Device-local bookkeeping that travels alongside the data. */
-export interface SyncMeta {
+interface SyncState {
+  /** Highest server_updated_at already pulled. */
+  cursor: string
+  /** "collection:id" → when it was changed locally (not yet pushed). */
+  dirty: Record<string, string>
+  /** "collection:id" → deletedAt for records deleted locally since the last push. */
+  deleted: Record<string, string>
+  settingsDirty: boolean
   settingsUpdatedAt: string
-  tombstones: Tombstone[]
   lastSyncAt: string | null
 }
 
-export interface SyncPayload {
-  app: 'PA Trading Journal'
-  format: 1
-  syncedAt: string
-  settingsUpdatedAt: string
-  tombstones: Tombstone[]
-  data: AppData
+const EPOCH = new Date(0).toISOString()
+let activeUser: string | null = null
+
+export function setSyncUser(userId: string | null): void {
+  activeUser = userId
 }
 
-interface EncryptedEnvelope {
-  app: 'PA Trading Journal'
-  encrypted: 'AES-GCM'
-  kdf: 'PBKDF2-SHA256'
-  iterations: number
-  salt: string
-  iv: string
-  ciphertext: string
+function key(userId: string): string {
+  return `pa-journal-cloud:${userId}`
 }
 
-/* ------------------------------------------------------------------ local storage */
-
-function readJson<T>(key: string): T | null {
+export function loadSyncState(userId = activeUser): SyncState {
+  const empty: SyncState = {
+    cursor: EPOCH,
+    dirty: {},
+    deleted: {},
+    settingsDirty: false,
+    settingsUpdatedAt: EPOCH,
+    lastSyncAt: null,
+  }
+  if (!userId) return empty
   try {
-    const raw = localStorage.getItem(key)
-    return raw ? (JSON.parse(raw) as T) : null
+    const raw = localStorage.getItem(key(userId))
+    return raw ? { ...empty, ...(JSON.parse(raw) as Partial<SyncState>) } : empty
   } catch {
-    return null
+    return empty
   }
 }
 
-function writeJson(key: string, value: unknown): void {
+function saveSyncState(state: SyncState, userId = activeUser): void {
+  if (!userId) return
   try {
-    localStorage.setItem(key, JSON.stringify(value))
+    localStorage.setItem(key(userId), JSON.stringify(state))
   } catch {
-    // Storage can be unavailable (private mode); sync then simply stays off.
+    // ignore — sync simply retries everything next time
   }
 }
 
-export function loadSyncConfig(): SyncConfig | null {
-  const config = readJson<SyncConfig>(CONFIG_KEY)
-  return config && config.token && config.password ? config : null
+function update(mutator: (state: SyncState) => void): void {
+  if (!activeUser) return
+  const state = loadSyncState()
+  mutator(state)
+  saveSyncState(state)
 }
 
-export function saveSyncConfig(config: SyncConfig | null): void {
-  if (config) writeJson(CONFIG_KEY, config)
-  else {
-    try {
-      localStorage.removeItem(CONFIG_KEY)
-    } catch {
-      // ignore
-    }
-  }
-}
+/* ------------------------------------------------------------ change notes (called by db.ts) */
 
-export function loadSyncMeta(): SyncMeta {
-  const meta = readJson<SyncMeta>(META_KEY)
-  return {
-    settingsUpdatedAt: meta?.settingsUpdatedAt ?? new Date(0).toISOString(),
-    tombstones: Array.isArray(meta?.tombstones) ? meta.tombstones : [],
-    lastSyncAt: meta?.lastSyncAt ?? null,
-  }
-}
-
-export function saveSyncMeta(meta: SyncMeta): void {
-  writeJson(META_KEY, meta)
-}
-
-export function markSettingsChanged(): void {
-  const meta = loadSyncMeta()
-  saveSyncMeta({ ...meta, settingsUpdatedAt: new Date().toISOString() })
-}
-
-export function recordDeletion(collection: string, id: string): void {
+export function noteChange(collection: string, id: string): void {
   if (!SYNC_COLLECTIONS.includes(collection as SyncCollection)) return
-  const meta = loadSyncMeta()
-  const tombstones = meta.tombstones.filter(
-    (t) => !(t.collection === collection && t.id === id),
-  )
-  tombstones.push({ collection: collection as SyncCollection, id, deletedAt: new Date().toISOString() })
-  saveSyncMeta({ ...meta, tombstones })
+  update((state) => {
+    const k = `${collection}:${id}`
+    state.dirty[k] = new Date().toISOString()
+    delete state.deleted[k]
+  })
 }
 
-/* ------------------------------------------------------------------ merge */
+export function noteDeletion(collection: string, id: string): void {
+  if (!SYNC_COLLECTIONS.includes(collection as SyncCollection)) return
+  update((state) => {
+    const k = `${collection}:${id}`
+    delete state.dirty[k]
+    state.deleted[k] = new Date().toISOString()
+  })
+}
+
+export function noteSettingsChange(): void {
+  update((state) => {
+    state.settingsDirty = true
+    state.settingsUpdatedAt = new Date().toISOString()
+  })
+}
+
+/** Mark every record as needing upload — used after importing a backup or device data. */
+export function noteAllChanged(data: AppData): void {
+  update((state) => {
+    for (const collection of SYNC_COLLECTIONS) {
+      for (const record of data[collection] as { id: string }[]) {
+        state.dirty[`${collection}:${record.id}`] = new Date().toISOString()
+      }
+    }
+    state.settingsDirty = true
+    state.settingsUpdatedAt = new Date().toISOString()
+  })
+}
+
+export function pendingChanges(): number {
+  const state = loadSyncState()
+  return (
+    Object.keys(state.dirty).length +
+    Object.keys(state.deleted).length +
+    (state.settingsDirty ? 1 : 0)
+  )
+}
+
+/* ------------------------------------------------------------ sync */
 
 interface Stamped {
   id: string
   updatedAt?: string
 }
 
-function stamp(record: Stamped): string {
-  return record.updatedAt ?? ''
-}
-
-export function mergeTombstones(a: Tombstone[], b: Tombstone[]): Tombstone[] {
-  const cutoff = Date.now() - TOMBSTONE_TTL_DAYS * 86_400_000
-  const map = new Map<string, Tombstone>()
-  for (const t of [...a, ...b]) {
-    if (Date.parse(t.deletedAt) < cutoff) continue
-    const key = `${t.collection}:${t.id}`
-    const existing = map.get(key)
-    if (!existing || existing.deletedAt < t.deletedAt) map.set(key, t)
-  }
-  return Array.from(map.values())
-}
-
-function mergeCollection<T extends Stamped>(
-  local: T[],
-  remote: T[],
-  tombstones: Map<string, string>,
-): T[] {
-  const map = new Map<string, T>()
-  for (const record of [...local, ...remote]) {
-    const existing = map.get(record.id)
-    if (!existing || stamp(record) > stamp(existing)) map.set(record.id, record)
-  }
-  return Array.from(map.values()).filter((record) => {
-    const deletedAt = tombstones.get(record.id)
-    // A record edited after it was deleted elsewhere is kept.
-    return !deletedAt || stamp(record) > deletedAt
-  })
-}
-
-export interface MergeResult {
-  data: AppData
-  settingsUpdatedAt: string
-  tombstones: Tombstone[]
-}
-
-export function mergeData(
-  local: AppData,
-  localMeta: SyncMeta,
-  remote: SyncPayload | null,
-): MergeResult {
-  if (!remote) {
-    return {
-      data: local,
-      settingsUpdatedAt: localMeta.settingsUpdatedAt,
-      tombstones: mergeTombstones(localMeta.tombstones, []),
-    }
-  }
-  const tombstones = mergeTombstones(localMeta.tombstones, remote.tombstones ?? [])
-  const byCollection = (collection: SyncCollection) =>
-    new Map(tombstones.filter((t) => t.collection === collection).map((t) => [t.id, t.deletedAt]))
-
-  const remoteNewerSettings = remote.settingsUpdatedAt > localMeta.settingsUpdatedAt
-  const settings: Settings = remoteNewerSettings
-    ? { ...remote.data.settings, lock: local.settings.lock, autoLockMinutes: local.settings.autoLockMinutes }
-    : local.settings
-
-  const data: AppData = {
-    settings,
-    plans: mergeCollection(local.plans, remote.data.plans ?? [], byCollection('plans')),
-    trades: mergeCollection(local.trades, remote.data.trades ?? [], byCollection('trades')),
-    checklists: mergeCollection(local.checklists, remote.data.checklists ?? [], byCollection('checklists')),
-    psych: mergeCollection(local.psych, remote.data.psych ?? [], byCollection('psych')),
-    events: mergeCollection(local.events, remote.data.events ?? [], byCollection('events')),
-    reflections: mergeCollection(local.reflections, remote.data.reflections ?? [], byCollection('reflections')),
-  }
-  return {
-    data,
-    settingsUpdatedAt: remoteNewerSettings ? remote.settingsUpdatedAt : localMeta.settingsUpdatedAt,
-    tombstones,
-  }
-}
-
-/** Stable fingerprint used to skip writes when nothing changed. */
-export function fingerprint(data: AppData): string {
-  const sortById = <T extends Stamped>(list: T[]) =>
-    [...list].sort((a, b) => a.id.localeCompare(b.id)).map((r) => `${r.id}@${stamp(r)}`)
-  const { lock: _lock, autoLockMinutes: _auto, ...shared } = data.settings
-  return JSON.stringify([
-    shared,
-    ...SYNC_COLLECTIONS.map((c) => sortById(data[c] as Stamped[])),
-  ])
-}
-
-/* ------------------------------------------------------------------ crypto */
-
-function toBase64(bytes: Uint8Array): string {
-  let binary = ''
-  const chunk = 0x8000
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
-  }
-  return btoa(binary)
-}
-
-function fromBase64(value: string): Uint8Array {
-  const binary = atob(value)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
-  return bytes
-}
-
-async function deriveKey(password: string, salt: Uint8Array, iterations: number): Promise<CryptoKey> {
-  const base = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(password),
-    'PBKDF2',
-    false,
-    ['deriveKey'],
-  )
-  return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', hash: 'SHA-256', salt: salt as BufferSource, iterations },
-    base,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt'],
-  )
-}
-
-export async function encryptPayload(payload: SyncPayload, password: string): Promise<string> {
-  const salt = crypto.getRandomValues(new Uint8Array(16))
-  const iv = crypto.getRandomValues(new Uint8Array(12))
-  const key = await deriveKey(password, salt, PBKDF2_ITERATIONS)
-  const plain = new TextEncoder().encode(JSON.stringify(payload))
-  const cipher = new Uint8Array(
-    await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv as BufferSource }, key, plain as BufferSource),
-  )
-  const envelope: EncryptedEnvelope = {
-    app: 'PA Trading Journal',
-    encrypted: 'AES-GCM',
-    kdf: 'PBKDF2-SHA256',
-    iterations: PBKDF2_ITERATIONS,
-    salt: toBase64(salt),
-    iv: toBase64(iv),
-    ciphertext: toBase64(cipher),
-  }
-  return JSON.stringify(envelope)
-}
-
-export class WrongPasswordError extends Error {
-  constructor() {
-    super('The sync password does not match the one used on your other device.')
-  }
-}
-
-export async function decryptPayload(raw: string, password: string): Promise<SyncPayload> {
-  const envelope = JSON.parse(raw) as EncryptedEnvelope
-  if (envelope.encrypted !== 'AES-GCM') throw new Error('Unrecognised sync file.')
-  const key = await deriveKey(password, fromBase64(envelope.salt), envelope.iterations)
-  try {
-    const plain = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: fromBase64(envelope.iv) as BufferSource },
-      key,
-      fromBase64(envelope.ciphertext) as BufferSource,
-    )
-    return JSON.parse(new TextDecoder().decode(plain)) as SyncPayload
-  } catch {
-    throw new WrongPasswordError()
-  }
-}
-
-/* ------------------------------------------------------------------ GitHub Gist API */
-
-const API = 'https://api.github.com'
-
-function headers(token: string): HeadersInit {
-  return {
-    Accept: 'application/vnd.github+json',
-    Authorization: `Bearer ${token}`,
-    'X-GitHub-Api-Version': '2022-11-28',
-  }
-}
-
-async function gh<T>(token: string, path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API}${path}`, {
-    ...init,
-    headers: { ...headers(token), ...(init?.body ? { 'Content-Type': 'application/json' } : {}) },
-  })
-  if (response.status === 401) throw new Error('GitHub rejected the token. Check it has not expired.')
-  if (response.status === 403 || response.status === 404) {
-    throw new Error('The token cannot access gists. Create it with the "gist" permission.')
-  }
-  if (!response.ok) throw new Error(`GitHub error ${response.status}.`)
-  return (await response.json()) as T
-}
-
-interface GistFile {
-  filename: string
-  content?: string
-  truncated?: boolean
-  raw_url: string
-}
-interface Gist {
+interface RecordRow {
+  collection: SyncCollection
   id: string
-  files: Record<string, GistFile>
+  data: Stamped | null
+  deleted: boolean
+  updated_at: string
+  server_updated_at: string
 }
 
-/** Find this journal's gist, or return null if none exists yet. */
-export async function findSyncGist(token: string): Promise<string | null> {
-  for (let page = 1; page <= 10; page += 1) {
-    const gists = await gh<Gist[]>(token, `/gists?per_page=100&page=${page}`)
-    const match = gists.find((g) => Object.keys(g.files).includes(SYNC_FILENAME))
-    if (match) return match.id
-    if (gists.length < 100) break
+/** Settings that belong to one device and are never synced. */
+function sharedSettings(settings: Settings): Omit<Settings, 'lock' | 'autoLockMinutes'> {
+  const { lock: _lock, autoLockMinutes: _autoLock, ...shared } = settings
+  return shared
+}
+
+/** A record that arrived from another device (record null = deleted there). */
+export interface PulledChange {
+  collection: SyncCollection
+  id: string
+  record: Stamped | null
+}
+
+export interface SyncResult {
+  changes: PulledChange[]
+  /** Newer settings from another device, or null. */
+  settings: Settings | null
+  pushed: number
+  pulled: number
+}
+
+const PAGE = 500
+
+export async function syncWithCloud(local: AppData): Promise<SyncResult> {
+  const client = requireSupabase()
+  const syncStartedAt = new Date().toISOString()
+  const state = loadSyncState()
+  const pushedDirty: Record<string, string> = { ...state.dirty }
+  const pushedDeleted: Record<string, string> = { ...state.deleted }
+  let data = local
+  let pulledSettings: Settings | null = null
+  const changes: PulledChange[] = []
+  let pulled = 0
+  /** Keys whose local copy was replaced or removed by a newer remote one. */
+  const pulledKeys = new Set<string>()
+
+  // ---- pull settings
+  const settingsRes = await client
+    .from('journal_settings')
+    .select('data, updated_at')
+    .maybeSingle()
+  if (settingsRes.error) throw settingsRes.error
+  const remoteSettings = settingsRes.data as { data: Settings; updated_at: string } | null
+  if (
+    remoteSettings &&
+    !state.settingsDirty &&
+    remoteSettings.updated_at > state.settingsUpdatedAt
+  ) {
+    pulledSettings = {
+      ...data.settings,
+      ...remoteSettings.data,
+      lock: data.settings.lock,
+      autoLockMinutes: data.settings.autoLockMinutes,
+    }
+    data = { ...data, settings: pulledSettings }
+    state.settingsUpdatedAt = remoteSettings.updated_at
   }
-  return null
+
+  // ---- pull records changed since the cursor
+  const collections = Object.fromEntries(
+    SYNC_COLLECTIONS.map((c) => [c, new Map((data[c] as Stamped[]).map((r) => [r.id, r]))]),
+  ) as Record<SyncCollection, Map<string, Stamped>>
+
+  for (;;) {
+    const res = await client
+      .from('journal_records')
+      .select('collection, id, data, deleted, updated_at, server_updated_at')
+      .gt('server_updated_at', state.cursor)
+      .order('server_updated_at', { ascending: true })
+      .limit(PAGE)
+    if (res.error) throw res.error
+    const rows = (res.data ?? []) as RecordRow[]
+    for (const row of rows) {
+      const map = collections[row.collection]
+      if (!map) continue
+      const k = `${row.collection}:${row.id}`
+      const localRecord = map.get(row.id)
+      const localStamp = localRecord?.updatedAt ?? EPOCH
+      const localDeletedAt = state.deleted[k]
+      if (row.deleted) {
+        if (localRecord && localStamp <= row.updated_at && !state.dirty[k]) {
+          map.delete(row.id)
+          pulledKeys.add(k)
+          changes.push({ collection: row.collection, id: row.id, record: null })
+          pulled += 1
+        }
+      } else if (row.data) {
+        const newerThanLocal = !localRecord || row.updated_at > localStamp
+        const newerThanDeletion = !localDeletedAt || row.updated_at > localDeletedAt
+        if (newerThanLocal && newerThanDeletion) {
+          map.set(row.id, row.data)
+          delete state.dirty[k]
+          delete state.deleted[k]
+          pulledKeys.add(k)
+          changes.push({ collection: row.collection, id: row.id, record: row.data })
+          pulled += 1
+        }
+      }
+      if (row.server_updated_at > state.cursor) state.cursor = row.server_updated_at
+    }
+    if (rows.length < PAGE) break
+  }
+
+  // ---- push local changes
+  const upserts: Omit<RecordRow, 'server_updated_at'>[] = []
+  for (const k of Object.keys(state.dirty)) {
+    const [collection, ...rest] = k.split(':')
+    const id = rest.join(':')
+    const record = collections[collection as SyncCollection]?.get(id)
+    if (!record) continue
+    upserts.push({
+      collection: collection as SyncCollection,
+      id,
+      data: record,
+      deleted: false,
+      updated_at: record.updatedAt ?? new Date().toISOString(),
+    })
+  }
+  for (const [k, deletedAt] of Object.entries(state.deleted)) {
+    const [collection, ...rest] = k.split(':')
+    upserts.push({
+      collection: collection as SyncCollection,
+      id: rest.join(':'),
+      data: null,
+      deleted: true,
+      updated_at: deletedAt,
+    })
+  }
+  // Send in batches of at most 100 rows or ~1.5 MB (trades can carry chart screenshots).
+  let batch: typeof upserts = []
+  let batchBytes = 0
+  const flush = async () => {
+    if (batch.length === 0) return
+    const { error } = await client
+      .from('journal_records')
+      .upsert(batch, { onConflict: 'user_id,collection,id' })
+    if (error) throw error
+    batch = []
+    batchBytes = 0
+  }
+  for (const row of upserts) {
+    const size = JSON.stringify(row).length
+    if (batch.length >= 100 || (batch.length > 0 && batchBytes + size > 1_500_000)) await flush()
+    batch.push(row)
+    batchBytes += size
+  }
+  await flush()
+
+  if (state.settingsDirty) {
+    const { error } = await client.from('journal_settings').upsert(
+      { data: sharedSettings(data.settings), updated_at: state.settingsUpdatedAt },
+      { onConflict: 'user_id' },
+    )
+    if (error) throw error
+  }
+
+  // Clear only what this sync handled; anything changed while it ran stays pending.
+  const latest = loadSyncState()
+  for (const k of pulledKeys) {
+    if (latest.dirty[k] && latest.dirty[k] <= syncStartedAt) delete latest.dirty[k]
+    if (latest.deleted[k] && latest.deleted[k] <= syncStartedAt) delete latest.deleted[k]
+  }
+  for (const [k, notedAt] of Object.entries(pushedDirty)) {
+    if (latest.dirty[k] === notedAt) delete latest.dirty[k]
+  }
+  for (const [k, deletedAt] of Object.entries(pushedDeleted)) {
+    if (latest.deleted[k] === deletedAt) delete latest.deleted[k]
+  }
+  latest.cursor = state.cursor
+  if (state.settingsDirty) {
+    if (latest.settingsUpdatedAt === state.settingsUpdatedAt) latest.settingsDirty = false
+  } else if (!latest.settingsDirty) {
+    latest.settingsUpdatedAt = state.settingsUpdatedAt
+  }
+  latest.lastSyncAt = new Date().toISOString()
+  saveSyncState(latest)
+
+  return {
+    changes,
+    settings: pulledSettings,
+    pushed: upserts.length + (state.settingsDirty ? 1 : 0),
+    pulled,
+  }
 }
 
-export async function readSyncGist(token: string, gistId: string): Promise<string | null> {
-  const gist = await gh<Gist>(token, `/gists/${gistId}`)
-  const file = gist.files[SYNC_FILENAME]
-  if (!file) return null
-  if (!file.truncated && file.content != null) return file.content
-  const raw = await fetch(file.raw_url, { cache: 'no-store' })
-  if (!raw.ok) throw new Error(`Could not download the sync file (${raw.status}).`)
-  return raw.text()
-}
-
-export async function writeSyncGist(
-  token: string,
-  gistId: string | null,
-  content: string,
-): Promise<string> {
-  const body = JSON.stringify({
-    description: 'PA Trading Journal — encrypted sync data',
-    files: { [SYNC_FILENAME]: { content } },
-    ...(gistId ? {} : { public: false }),
+/**
+ * Apply what a sync pulled to the journal as it is now. Records the user changed while the
+ * sync was running keep the local version; they are uploaded on the next sync.
+ */
+export function applyPulledChanges(
+  current: AppData,
+  result: SyncResult,
+): { data: AppData; puts: PulledChange[]; deletes: PulledChange[]; settings: Settings | null } | null {
+  const state = loadSyncState()
+  const settings =
+    result.settings && !state.settingsDirty
+      ? {
+          ...result.settings,
+          lock: current.settings.lock,
+          autoLockMinutes: current.settings.autoLockMinutes,
+        }
+      : null
+  const applied = result.changes.filter((change) => {
+    const k = `${change.collection}:${change.id}`
+    return !state.dirty[k] && !state.deleted[k]
   })
-  const gist = gistId
-    ? await gh<Gist>(token, `/gists/${gistId}`, { method: 'PATCH', body })
-    : await gh<Gist>(token, '/gists', { method: 'POST', body })
-  return gist.id
+  if (!settings && applied.length === 0) return null
+
+  const next: AppData = { ...current, settings: settings ?? current.settings }
+  for (const collection of SYNC_COLLECTIONS) {
+    const mine = applied.filter((change) => change.collection === collection)
+    if (mine.length === 0) continue
+    const map = new Map((current[collection] as Stamped[]).map((r) => [r.id, r]))
+    for (const change of mine) {
+      if (change.record) map.set(change.id, change.record)
+      else map.delete(change.id)
+    }
+    ;(next as unknown as Record<SyncCollection, Stamped[]>)[collection] = Array.from(map.values())
+  }
+  return {
+    data: next,
+    puts: applied.filter((change) => change.record),
+    deletes: applied.filter((change) => !change.record),
+    settings,
+  }
 }

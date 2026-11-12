@@ -27,7 +27,7 @@ import {
 } from 'lucide-react'
 import type { InstrumentSpec } from '@/types'
 import { useData } from '@/store/DataContext'
-import { SyncCard } from '@/components/settings/SyncCard'
+import { AccountCard } from '@/components/settings/AccountCard'
 import { useToast } from '@/store/ToastContext'
 import { PageHeader } from '@/components/layout/PageHeader'
 import {
@@ -508,7 +508,7 @@ export function SettingsPage() {
       <PageHeader
         eyebrow="Settings"
         title="Configure the journal honestly"
-        description="Your balance, timezone, risk limits and contract specification. Everything is stored in this browser — no account, no broker connection, no credentials requested."
+        description="Your balance, timezone, risk limits and contract specification. Your journal is private to your login — no broker connection, no trading credentials requested."
       />
 
       <Tabs
@@ -526,6 +526,7 @@ export function SettingsPage() {
       {tab === 'account' ? (
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-4">
+            <AccountCard />
             <Card>
               <CardHeader
                 title="Profile and account"
@@ -602,15 +603,15 @@ export function SettingsPage() {
                   },
                   {
                     title: 'No broker credentials',
-                    text: 'There is no login, API key or broker connection. Never enter credentials into a journal.',
+                    text: 'The only login is your journal account. The app never asks for broker, MT5 or API credentials.',
                   },
                   {
                     title: 'No profit promises',
                     text: 'Analytics describe recorded history. They do not predict future results or guarantee an edge.',
                   },
                   {
-                    title: 'Local and private',
-                    text: 'Data stays in IndexedDB in this browser. Clearing site data or forgetting the passcode can remove access.',
+                    title: 'Private to you',
+                    text: 'Only your login can read your journal. A copy is kept in this browser for offline use; your account keeps it safe across devices.',
                   },
                 ].map((item) => (
                   <div
@@ -1169,8 +1170,6 @@ export function SettingsPage() {
               </div>
             </Card>
           </div>
-
-          <SyncCard />
 
           <Card>
             <CardHeader

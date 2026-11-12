@@ -2,6 +2,9 @@ import { lazy, Suspense, useEffect, useRef } from 'react'
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { AlertTriangle, Loader2, RotateCcw } from 'lucide-react'
 import { DataProvider, useData } from '@/store/DataContext'
+import { AuthProvider, useAuth } from '@/store/AuthContext'
+import { AuthScreens, SetNewPasswordScreen } from '@/components/auth/AuthScreens'
+import { LegacyImportBanner } from '@/components/settings/AccountCard'
 import { ToastProvider } from '@/store/ToastContext'
 import { AppShell } from '@/components/layout/AppShell'
 import { LockScreen } from '@/components/LockScreen'
@@ -87,7 +90,7 @@ function AutoLock() {
   return null
 }
 
-function Splash() {
+function Splash({ label = 'Opening your journal' }: { label?: string }) {
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-ink px-4">
       <div className="pointer-events-none absolute inset-0 grid-lines opacity-60" />
@@ -96,10 +99,10 @@ function Splash() {
         <LogoMark size={54} />
         <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em] text-dim">
           <Loader2 size={13} className="animate-spin" />
-          Opening local journal
+          {label}
         </div>
         <p className="max-w-xs text-center text-[10px] leading-relaxed text-dim">
-          Reading plans, trades and checklists from this browser.
+          Loading your plans, trades and checklists.
         </p>
       </div>
     </div>
@@ -139,6 +142,7 @@ function JournalApp() {
     <AppShell>
       <AutoLock />
       <ScrollToTop />
+      <LegacyImportBanner />
       <Suspense fallback={<PageLoading />}>
         <Routes>
           <Route path="/" element={<DashboardPage />} />
@@ -157,14 +161,38 @@ function JournalApp() {
   )
 }
 
-export default function App() {
-  return (
-    <DataProvider>
-      <ToastProvider>
+/** Decides who is using the app; each account only ever opens its own journal. */
+function AccountGate() {
+  const { enabled, loading, user, recovering } = useAuth()
+
+  // Built without account keys: keep working as a private, browser-only journal.
+  if (!enabled) {
+    return (
+      <DataProvider userId={null}>
         <HashRouter>
           <JournalApp />
         </HashRouter>
-      </ToastProvider>
+      </DataProvider>
+    )
+  }
+  if (loading) return <Splash label="Checking your sign-in" />
+  if (recovering) return <SetNewPasswordScreen />
+  if (!user) return <AuthScreens />
+  return (
+    <DataProvider key={user.id} userId={user.id}>
+      <HashRouter>
+        <JournalApp />
+      </HashRouter>
     </DataProvider>
+  )
+}
+
+export default function App() {
+  return (
+    <ToastProvider>
+      <AuthProvider>
+        <AccountGate />
+      </AuthProvider>
+    </ToastProvider>
   )
 }

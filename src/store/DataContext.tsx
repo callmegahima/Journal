@@ -23,12 +23,16 @@ import {
   clearBackupFolder,
   loadAllData,
   loadBackupFolder,
+  loadLegacyData,
   persistRecord,
   persistSettings,
   removeRecord,
   replaceAllData,
   saveBackupFolder,
+  setDatabaseUser,
+  writePulledChanges,
 } from '@/lib/db'
+import { cloudConfigured } from '@/lib/supabase'
 import { buildDefaultSettings, hydrateSettings, SETTINGS_VERSION } from '@/lib/defaults'
 import { verifyPasscode } from '@/lib/auth'
 import { nowIso } from '@/lib/dates'
@@ -41,23 +45,17 @@ import {
   type FolderPermission,
 } from '@/lib/autosave'
 import {
-  decryptPayload,
-  encryptPayload,
-  findSyncGist,
-  fingerprint,
-  loadSyncConfig,
-  loadSyncMeta,
-  mergeData,
-  readSyncGist,
-  saveSyncConfig,
-  saveSyncMeta,
-  WrongPasswordError,
-  writeSyncGist,
-  type SyncPayload,
+  applyPulledChanges,
+  loadSyncState,
+  noteAllChanged,
+  noteDeletion,
+  SYNC_COLLECTIONS,
+  syncWithCloud,
 } from '@/lib/sync'
 
 export interface SyncStatus {
-  configured: boolean
+  /** True when signed in to an account with cloud storage. */
+  enabled: boolean
   syncing: boolean
   lastSyncAt: string | null
   error: string | null
@@ -100,9 +98,13 @@ interface DataContextValue {
   disconnectAutoBackupFolder: () => Promise<void>
   saveAutoBackupNow: () => Promise<boolean>
   sync: SyncStatus
-  connectSync: (token: string, password: string) => Promise<void>
-  disconnectSync: () => void
   syncNow: () => Promise<boolean>
+  /** Journal saved in this browser before accounts existed, offered once for import. */
+  legacy: { records: number } | null
+  importLegacy: () => Promise<number>
+  dismissLegacy: () => void
+  /** Erase this account's copy from this browser (used when signing out of a shared device). */
+  forgetLocal: () => Promise<void>
   unlocked: boolean
   unlock: (passcode: string) => Promise<boolean>
   lockNow: () => void
@@ -129,6 +131,14 @@ function serializeBackup(data: AppData): string {
     null,
     2,
   )
+}
+
+function legacyDismissKey(userId: string): string {
+  return `pa-journal-legacy-done:${userId}`
+}
+
+function countRecords(data: AppData): number {
+  return SYNC_COLLECTIONS.reduce((sum, c) => sum + data[c].length, 0)
 }
 
 const AUTO_SAVE_DELAY = 800
@@ -185,7 +195,15 @@ function isReflection(value: unknown): value is WeeklyReflection {
   return isRecord(value) && typeof value.id === 'string' && typeof value.weekStart === 'string'
 }
 
-export function DataProvider({ children }: { children: ReactNode }) {
+export function DataProvider({
+  children,
+  userId = null,
+}: {
+  children: ReactNode
+  /** Signed-in account; null keeps the journal in this browser only. */
+  userId?: string | null
+}) {
+  const syncEnabled = Boolean(userId) && cloudConfigured
   const [data, setData] = useState<AppData>(emptyData)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -213,11 +231,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const syncAgainRef = useRef(false)
   const runSyncRef = useRef<() => Promise<boolean>>(async () => false)
   const [sync, setSync] = useState<SyncStatus>(() => ({
-    configured: loadSyncConfig() != null,
+    enabled: syncEnabled,
     syncing: false,
-    lastSyncAt: loadSyncMeta().lastSyncAt,
+    lastSyncAt: userId ? loadSyncState(userId).lastSyncAt : null,
     error: null,
   }))
+  const [legacy, setLegacy] = useState<{ records: number } | null>(null)
+  const legacyRef = useRef<AppData | null>(null)
 
   const runAutoSave = useCallback(async (): Promise<boolean> => {
     const folder = folderRef.current
@@ -288,13 +308,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, [scheduleAutoSave])
 
   const scheduleSync = useCallback((delay = SYNC_DELAY) => {
-    if (!loadSyncConfig()) return
+    if (!syncEnabled) return
     if (syncTimer.current !== null) window.clearTimeout(syncTimer.current)
     syncTimer.current = window.setTimeout(() => {
       syncTimer.current = null
       void runSyncRef.current()
     }, delay)
-  }, [])
+  }, [syncEnabled])
 
   const commit = useCallback(
     (next: AppData) => {
@@ -306,10 +326,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [scheduleAutoSave, scheduleSync],
   )
 
-  /** Pull the gist, merge with local data, save the result locally and upload it. */
+  /** Upload local changes to the account and bring in changes made on other devices. */
   const runSync = useCallback(async (): Promise<boolean> => {
-    const config = loadSyncConfig()
-    if (!config) return false
+    if (!syncEnabled) return false
+    if (!navigator.onLine) {
+      setSync((current) => ({ ...current, error: 'Offline — changes are saved here and will sync when you reconnect.' }))
+      return false
+    }
     if (syncingRef.current) {
       syncAgainRef.current = true
       return false
@@ -317,58 +340,34 @@ export function DataProvider({ children }: { children: ReactNode }) {
     syncingRef.current = true
     setSync((current) => ({ ...current, syncing: true, error: null }))
     try {
-      let gistId = config.gistId ?? (await findSyncGist(config.token))
-      const remoteRaw = gistId ? await readSyncGist(config.token, gistId) : null
-      const remote = remoteRaw ? await decryptPayload(remoteRaw, config.password) : null
-
-      const local = dataRef.current
-      const meta = loadSyncMeta()
-      const merged = mergeData(local, meta, remote)
-
-      if (fingerprint(merged.data) !== fingerprint(local)) {
-        await replaceAllData(merged.data)
-        dataRef.current = merged.data
-        setData(merged.data)
+      const result = await syncWithCloud(dataRef.current)
+      const applied = applyPulledChanges(dataRef.current, result)
+      if (applied) {
+        await writePulledChanges(
+          applied.puts.map((c) => ({ collection: c.collection, record: c.record })),
+          applied.deletes.map((c) => ({ collection: c.collection, id: c.id })),
+          applied.settings,
+        )
+        dataRef.current = applied.data
+        setData(applied.data)
         scheduleAutoSave()
       }
-
-      const remoteUnchanged =
-        remote != null &&
-        fingerprint(remote.data) === fingerprint(merged.data) &&
-        (remote.tombstones ?? []).length === merged.tombstones.length &&
-        remote.settingsUpdatedAt === merged.settingsUpdatedAt
-      if (!remoteUnchanged) {
-        const payload: SyncPayload = {
-          app: 'PA Trading Journal',
-          format: 1,
-          syncedAt: nowIso(),
-          settingsUpdatedAt: merged.settingsUpdatedAt,
-          tombstones: merged.tombstones,
-          data: merged.data,
-        }
-        gistId = await writeSyncGist(
-          config.token,
-          gistId,
-          await encryptPayload(payload, config.password),
-        )
-      }
-      if (gistId !== config.gistId) saveSyncConfig({ ...config, gistId })
-
-      const lastSyncAt = nowIso()
-      saveSyncMeta({
-        settingsUpdatedAt: merged.settingsUpdatedAt,
-        tombstones: merged.tombstones,
-        lastSyncAt,
-      })
-      setSync({ configured: true, syncing: false, lastSyncAt, error: null })
+      setSync({ enabled: true, syncing: false, lastSyncAt: nowIso(), error: null })
       return true
     } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : isRecord(error) && typeof error.message === 'string'
+            ? error.message
+            : 'Sync failed.'
       setSync((current) => ({
         ...current,
         syncing: false,
-        error: error instanceof Error ? error.message : 'Sync failed.',
+        error: /fetch|network/i.test(message)
+          ? 'Could not reach the server. Changes are saved here and will sync later.'
+          : message,
       }))
-      if (error instanceof WrongPasswordError) throw error
       return false
     } finally {
       syncingRef.current = false
@@ -377,22 +376,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
         scheduleSync(1000)
       }
     }
-  }, [scheduleAutoSave, scheduleSync])
+  }, [syncEnabled, scheduleAutoSave, scheduleSync])
 
   useEffect(() => {
-    runSyncRef.current = async () => {
-      try {
-        return await runSync()
-      } catch {
-        return false
-      }
-    }
+    runSyncRef.current = runSync
   }, [runSync])
 
   // Sync when the app opens, when it comes back to the foreground, and every 2 minutes.
   useEffect(() => {
-    if (loading || !sync.configured) return
-    scheduleSync(500)
+    if (loading || !syncEnabled) return
+    scheduleSync(300)
     const onVisible = () => {
       if (document.visibilityState === 'visible') scheduleSync(300)
     }
@@ -403,45 +396,71 @@ export function DataProvider({ children }: { children: ReactNode }) {
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('online', onVisible)
       window.clearInterval(interval)
+      if (syncTimer.current !== null) window.clearTimeout(syncTimer.current)
     }
-  }, [loading, sync.configured, scheduleSync])
+  }, [loading, syncEnabled, scheduleSync])
 
-  const connectSync = useCallback(
-    async (token: string, password: string) => {
-      const cleanToken = token.trim()
-      if (!cleanToken) throw new Error('Paste your GitHub token first.')
-      if (password.length < 8) throw new Error('Use a sync password of at least 8 characters.')
-      const gistId = await findSyncGist(cleanToken)
-      if (gistId) {
-        // Check the password against existing data before saving anything.
-        const raw = await readSyncGist(cleanToken, gistId)
-        if (raw) await decryptPayload(raw, password)
-      }
-      saveSyncConfig({ token: cleanToken, password, gistId })
-      setSync((current) => ({ ...current, configured: true, error: null }))
-      await runSync()
-    },
-    [runSync],
-  )
+  const syncNow = useCallback(() => runSync(), [runSync])
 
-  const disconnectSync = useCallback(() => {
-    saveSyncConfig(null)
-    if (syncTimer.current !== null) window.clearTimeout(syncTimer.current)
-    setSync({ configured: false, syncing: false, lastSyncAt: null, error: null })
-  }, [])
-
-  const syncNow = useCallback(async () => {
+  const importLegacy = useCallback(async () => {
+    const old = legacyRef.current
+    if (!old || !userId) return 0
+    const current = dataRef.current
+    const fresh = countRecords(current) === 0
+    const merged: AppData = { ...current, settings: fresh ? old.settings : current.settings }
+    let added = 0
+    for (const collection of SYNC_COLLECTIONS) {
+      const ids = new Set((current[collection] as { id: string }[]).map((r) => r.id))
+      const extra = (old[collection] as { id: string }[]).filter((r) => !ids.has(r.id))
+      added += extra.length
+      ;(merged as unknown as Record<string, unknown[]>)[collection] = [
+        ...(current[collection] as unknown[]),
+        ...extra,
+      ]
+    }
+    await replaceAllData(merged)
+    noteAllChanged(merged)
+    commit(merged)
     try {
-      return await runSync()
+      localStorage.setItem(legacyDismissKey(userId), new Date().toISOString())
     } catch {
-      return false
+      // ignore
     }
-  }, [runSync])
+    legacyRef.current = null
+    setLegacy(null)
+    return added
+  }, [commit, userId])
+
+  const forgetLocal = useCallback(async () => {
+    if (syncTimer.current !== null) window.clearTimeout(syncTimer.current)
+    await clearAllData()
+    await clearBackupFolder()
+    if (userId) {
+      try {
+        localStorage.removeItem(`pa-journal-cloud:${userId}`)
+      } catch {
+        // ignore
+      }
+    }
+  }, [userId])
+
+  const dismissLegacy = useCallback(() => {
+    if (userId) {
+      try {
+        localStorage.setItem(legacyDismissKey(userId), new Date().toISOString())
+      } catch {
+        // ignore
+      }
+    }
+    legacyRef.current = null
+    setLegacy(null)
+  }, [userId])
 
   const load = useCallback(async () => {
     setLoading(true)
     setLoadError(null)
     try {
+      setDatabaseUser(userId)
       const loaded = await loadAllData()
       dataRef.current = loaded
       setData(loaded)
@@ -464,6 +483,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
       } catch {
         // A missing or unreadable folder handle should not stop the journal loading.
       }
+
+      if (userId) {
+        try {
+          const done = localStorage.getItem(legacyDismissKey(userId))
+          const old = done ? null : await loadLegacyData()
+          if (old) {
+            legacyRef.current = old
+            setLegacy({ records: countRecords(old) })
+          }
+        } catch {
+          // The old browser journal is optional.
+        }
+      }
     } catch (error) {
       setLoadError(
         error instanceof Error
@@ -473,7 +505,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false)
     }
-  }, [runAutoSave])
+  }, [runAutoSave, userId])
 
   useEffect(() => {
     void load()
@@ -706,6 +738,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
   )
 
   const resetAll = useCallback(async () => {
+    const current = dataRef.current
+    for (const collection of SYNC_COLLECTIONS) {
+      for (const record of current[collection] as { id: string }[]) noteDeletion(collection, record.id)
+    }
     await clearAllData()
     const settings = buildDefaultSettings()
     await persistSettings(settings)
@@ -797,7 +833,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
           : [],
       }
 
+      const previous = dataRef.current
       await replaceAllData(next)
+      for (const collection of SYNC_COLLECTIONS) {
+        const kept = new Set((next[collection] as { id: string }[]).map((r) => r.id))
+        for (const record of previous[collection] as { id: string }[]) {
+          if (!kept.has(record.id)) noteDeletion(collection, record.id)
+        }
+      }
+      noteAllChanged(next)
       commit(next)
       setUnlocked(!settings.lock.enabled)
     },
@@ -847,9 +891,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
       disconnectAutoBackupFolder,
       saveAutoBackupNow,
       sync,
-      connectSync,
-      disconnectSync,
       syncNow,
+      legacy,
+      importLegacy,
+      dismissLegacy,
+      forgetLocal,
       unlocked,
       unlock,
       lockNow,
@@ -881,9 +927,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
       disconnectAutoBackupFolder,
       saveAutoBackupNow,
       sync,
-      connectSync,
-      disconnectSync,
       syncNow,
+      legacy,
+      importLegacy,
+      dismissLegacy,
+      forgetLocal,
       unlocked,
       unlock,
       lockNow,

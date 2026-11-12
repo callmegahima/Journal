@@ -10,6 +10,7 @@ import {
   ClipboardList,
   LayoutDashboard,
   Lock,
+  LogOut,
   Menu,
   Plus,
   Settings,
@@ -18,6 +19,7 @@ import {
   X,
 } from 'lucide-react'
 import { Logo, LogoMark } from '@/components/Logo'
+import { useAuth } from '@/store/AuthContext'
 import { useData } from '@/store/DataContext'
 import { cn } from '@/lib/utils'
 import { money, moneySigned } from '@/lib/format'
@@ -67,7 +69,8 @@ function useClock(tz: string) {
 }
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
-  const { data, lockNow } = useData()
+  const { data, lockNow, sync, syncNow } = useData()
+  const auth = useAuth()
   const { settings, trades } = data
   const navigate = useNavigate()
   const risk = useMemo(
@@ -213,7 +216,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             </div>
             <div className="flex items-center gap-1 text-[9px] text-dim">
               <Activity size={9} />
-              Local journal · USD
+              {auth.user ? (sync.error ? 'Private account · offline' : 'Private account · synced') : 'Local journal · USD'}
             </div>
           </div>
           {settings.lock.enabled ? (
@@ -225,6 +228,22 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               aria-label="Lock journal"
             >
               <Lock size={13} />
+            </button>
+          ) : null}
+          {auth.user ? (
+            <button
+              type="button"
+              onClick={() => {
+                void (async () => {
+                  if (sync.enabled) await syncNow()
+                  await auth.signOut()
+                })()
+              }}
+              className="rounded-md p-1.5 text-dim transition hover:bg-panel-2 hover:text-fg"
+              title={`Sign out ${auth.user.email ?? ''}`}
+              aria-label="Sign out"
+            >
+              <LogOut size={13} />
             </button>
           ) : null}
         </div>
