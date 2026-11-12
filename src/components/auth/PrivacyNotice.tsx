@@ -7,6 +7,7 @@ export function PrivacyNotice() {
       title: 'What we store',
       body: [
         'Your email address and a securely hashed password, so you can sign in.',
+        'If you use “Continue with Google”, Google shares your name, email address and profile picture with us. We never see your Google password.',
         'The journal content you enter: plans, trades, checklists, psychology notes, calendar events, weekly reviews, settings and any chart screenshots you upload.',
         'A copy of your journal is also kept in this browser so the app works offline and loads quickly.',
       ],

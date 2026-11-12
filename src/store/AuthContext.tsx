@@ -20,6 +20,8 @@ interface AuthContextValue {
   recovering: boolean
   signUp: (email: string, password: string) => Promise<{ needsConfirmation: boolean }>
   signIn: (email: string, password: string) => Promise<void>
+  /** Leaves for Google's account picker and comes back signed in. */
+  signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
   sendPasswordReset: (email: string) => Promise<void>
   resendConfirmation: (email: string) => Promise<void>
@@ -44,6 +46,8 @@ export function friendlyAuthError(error: unknown): string {
     return 'Too many attempts. Wait a minute and try again.'
   if (lower.includes('password should be') || lower.includes('weak'))
     return 'Choose a stronger password: at least 8 characters with letters and numbers.'
+  if (lower.includes('provider is not enabled') || lower.includes('unsupported provider'))
+    return 'Google sign-in is not switched on yet. Use email and password for now.'
   if (lower.includes('failed to fetch') || lower.includes('network'))
     return 'No connection to the server. Check your internet and try again.'
   return message || 'Something went wrong. Try again.'
@@ -99,6 +103,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) throw error
   }, [])
 
+  const signInWithGoogle = useCallback(async () => {
+    const { error } = await requireSupabase().auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: appUrl(),
+        // Always show Google's account chooser, so each person picks their own account.
+        queryParams: { prompt: 'select_account' },
+      },
+    })
+    if (error) throw error
+  }, [])
+
   const signOut = useCallback(async () => {
     await requireSupabase().auth.signOut()
   }, [])
@@ -144,6 +160,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       recovering,
       signUp,
       signIn,
+      signInWithGoogle,
       signOut,
       sendPasswordReset,
       resendConfirmation,
@@ -157,6 +174,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       recovering,
       signUp,
       signIn,
+      signInWithGoogle,
       signOut,
       sendPasswordReset,
       resendConfirmation,
