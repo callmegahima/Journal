@@ -10,7 +10,7 @@ import { AppShell } from '@/components/layout/AppShell'
 import { LockScreen } from '@/components/LockScreen'
 import { LogoMark } from '@/components/Logo'
 import { Button } from '@/components/ui/primitives'
-import { loadPage } from '@/lib/reload'
+import { hardReload, loadPage } from '@/lib/reload'
 
 const DashboardPage = lazy(() =>
   loadPage(() => import('@/pages/Dashboard')).then((module) => ({ default: module.DashboardPage })),
@@ -79,7 +79,7 @@ class PageErrorBoundary extends Component<{ children: ReactNode; resetKey: strin
           The app was probably updated, or the connection dropped. Reload to get the latest
           version. Your journal data is safe.
         </p>
-        <Button variant="primary" onClick={() => window.location.reload()}>
+        <Button variant="primary" onClick={hardReload}>
           <RotateCcw size={14} /> Reload
         </Button>
       </div>

@@ -7,9 +7,11 @@ import '@fontsource/jetbrains-mono/600.css'
 import './index.css'
 import App from './App.tsx'
 import { initTheme } from './lib/theme.ts'
-import { reloadForNewVersion } from './lib/reload.ts'
+import { cleanReloadParam, reloadForNewVersion, startUpdateWatcher } from './lib/reload.ts'
 
+cleanReloadParam()
 initTheme()
+startUpdateWatcher()
 
 // A file from an older deploy failed to load: reload once to get the new version.
 window.addEventListener('vite:preloadError', (event) => {
